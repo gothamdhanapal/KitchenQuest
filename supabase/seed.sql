@@ -1,0 +1,4 @@
+-- FreshLoop seed data placeholder.
+--
+-- Import the real master inventory export into public.inventory_items after creating
+-- a household row. See data/inventory_items.example.csv for the expected columns.

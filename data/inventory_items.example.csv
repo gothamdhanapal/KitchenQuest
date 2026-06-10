@@ -1,0 +1,11 @@
+item_name,normalized_name,category,unit,default_shelf_life_days,essential_to_refill
+Milk,milk,dairy,l,3,true
+Curd,curd,dairy,g,7,true
+Bread,bread,bakery,pack,5,true
+Eggs,eggs,dairy,piece,21,true
+Onion,onion,vegetable,kg,30,true
+Tomato,tomato,vegetable,kg,7,true
+Rice,rice,grain,kg,180,true
+Atta,atta,grain,kg,120,true
+Toor Dal,toor dal,pulses,kg,180,true
+Cooking Oil,cooking oil,oil,l,180,true
