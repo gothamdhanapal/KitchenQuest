@@ -9,7 +9,9 @@ type Command =
   | "open"
   | "list-invoices"
   | "pull-invoices"
-  | "recent-files";
+  | "recent-files"
+  | "list-downloads"
+  | "pull-downloads";
 
 const ADB_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 const BLINKIT_PACKAGE_FALLBACK = "com.grofers.customerapp";
@@ -25,6 +27,11 @@ const ANDROID_SEARCH_DIRS = [
   "/sdcard/Android/data/com.grofers.customerapp",
   "/storage/emulated/0/Android/data/com.grofers.customerapp",
 ];
+const ANDROID_DOWNLOAD_PROVIDER_URIS = [
+  "content://downloads/my_downloads",
+  "content://downloads/public_downloads",
+  "content://downloads/all_downloads",
+];
 
 const command = (process.argv[2] ?? "diagnose") as Command;
 const artifactDir = resolve(process.cwd(), "artifacts", "blinkit");
@@ -33,9 +40,21 @@ const adb = resolveAdbPath();
 main();
 
 function main() {
-  if (!["diagnose", "capture", "dump-ui", "open", "list-invoices", "pull-invoices", "recent-files"].includes(command)) {
+  if (
+    ![
+      "diagnose",
+      "capture",
+      "dump-ui",
+      "open",
+      "list-invoices",
+      "pull-invoices",
+      "recent-files",
+      "list-downloads",
+      "pull-downloads",
+    ].includes(command)
+  ) {
     fail(
-      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, or recent-files.`,
+      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, recent-files, list-downloads, or pull-downloads.`,
     );
   }
 
@@ -119,6 +138,41 @@ function main() {
       console.log(`${index + 1}. ${file.path} (${file.sizeBytes} bytes, ${file.modifiedAt})`);
     });
     console.log("Manifest:", join(artifactDir, "recent-files.json"));
+    return;
+  }
+
+  if (command === "list-downloads") {
+    const downloads = listDownloadProviderCandidates(deviceId);
+    writeDownloadManifest(downloads);
+
+    if (downloads.length === 0) {
+      console.log("No Android download-provider entries found.");
+      return;
+    }
+
+    console.log("Android download-provider entries:");
+    downloads.slice(0, 50).forEach((download, index) => {
+      console.log(
+        `${index + 1}. ${download.displayName} | ${download.mimeType ?? "unknown mime"} | ${download.path ?? download.contentUri}`,
+      );
+    });
+    console.log("Manifest:", join(artifactDir, "download-provider-candidates.json"));
+    return;
+  }
+
+  if (command === "pull-downloads") {
+    const downloads = listDownloadProviderCandidates(deviceId).filter(isLikelyInvoiceDownload);
+    writeDownloadManifest(downloads);
+
+    if (downloads.length === 0) {
+      fail("No invoice-like Android download-provider entries found. Try `npm run blinkit:list-downloads`.");
+    }
+
+    const pulled = pullDownloadProviderFiles(deviceId, downloads);
+    console.log("Pulled download-provider files:");
+    pulled.forEach((path) => console.log(`- ${path}`));
+    console.log("Latest download:", join(artifactDir, "latest-invoice.pdf"));
+    console.log("Manifest:", join(artifactDir, "download-provider-candidates.json"));
     return;
   }
 
@@ -227,6 +281,14 @@ type AndroidFileCandidate = {
   modifiedAt: string;
 };
 
+type DownloadProviderCandidate = {
+  contentUri: string;
+  displayName: string;
+  mimeType: string | null;
+  path: string | null;
+  raw: Record<string, string>;
+};
+
 function listInvoiceCandidates(deviceId: string): InvoiceCandidate[] {
   return listAndroidFiles(deviceId, {
     maxDepth: 6,
@@ -326,6 +388,139 @@ function pullInvoices(deviceId: string, invoices: InvoiceCandidate[]): string[] 
 
     return localPath;
   });
+}
+
+function listDownloadProviderCandidates(deviceId: string): DownloadProviderCandidate[] {
+  const downloads: DownloadProviderCandidate[] = [];
+
+  for (const uri of ANDROID_DOWNLOAD_PROVIDER_URIS) {
+    const result = adbTryExecText(["-s", deviceId, "shell", "content", "query", "--uri", uri]);
+
+    if (!result.ok) {
+      continue;
+    }
+
+    downloads.push(...parseDownloadProviderRows(uri, result.stdout));
+  }
+
+  return dedupeDownloads(downloads);
+}
+
+function parseDownloadProviderRows(baseUri: string, output: string): DownloadProviderCandidate[] {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("Row:"))
+    .flatMap((line) => {
+      const raw = parseContentRow(line);
+      const id = raw._id;
+
+      if (!id) {
+        return [];
+      }
+
+      const displayName =
+        raw._display_name ??
+        raw.title ??
+        raw.name ??
+        raw.description ??
+        raw.hint?.split("/").pop() ??
+        `download-${id}`;
+      const mimeType = raw.mime_type ?? raw.mimetype ?? null;
+      const path = raw.local_filename ?? raw._data ?? normalizeFileUri(raw.uri) ?? normalizeFileUri(raw.hint);
+
+      return [
+        {
+          contentUri: `${baseUri}/${id}`,
+          displayName,
+          mimeType,
+          path,
+          raw,
+        },
+      ];
+    });
+}
+
+function parseContentRow(line: string): Record<string, string> {
+  const withoutPrefix = line.replace(/^Row:\s*\d+\s*/, "");
+  const values: Record<string, string> = {};
+
+  for (const part of withoutPrefix.split(/,\s(?=[A-Za-z0-9_.$-]+=)/)) {
+    const separator = part.indexOf("=");
+    if (separator === -1) {
+      continue;
+    }
+
+    values[part.slice(0, separator)] = part.slice(separator + 1);
+  }
+
+  return values;
+}
+
+function normalizeFileUri(value: string | undefined): string | null {
+  if (!value?.startsWith("file://")) {
+    return null;
+  }
+
+  return decodeURIComponent(value.replace(/^file:\/\//, ""));
+}
+
+function dedupeDownloads(downloads: DownloadProviderCandidate[]): DownloadProviderCandidate[] {
+  const seen = new Set<string>();
+
+  return downloads.filter((download) => {
+    const key = download.path ?? download.contentUri;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function isLikelyInvoiceDownload(download: DownloadProviderCandidate): boolean {
+  return (
+    download.mimeType === "application/pdf" ||
+    /\.pdf$/i.test(download.displayName) ||
+    /(invoice|receipt|bill)/i.test(download.displayName)
+  );
+}
+
+function writeDownloadManifest(downloads: DownloadProviderCandidate[]) {
+  writeFileSync(join(artifactDir, "download-provider-candidates.json"), `${JSON.stringify(downloads, null, 2)}\n`);
+}
+
+function pullDownloadProviderFiles(deviceId: string, downloads: DownloadProviderCandidate[]): string[] {
+  const invoiceDir = join(artifactDir, "invoices");
+  mkdirSync(invoiceDir, { recursive: true });
+
+  return downloads.map((download, index) => {
+    const localName = `${String(index + 1).padStart(2, "0")}-${sanitizeFileName(ensurePdfExtension(download.displayName))}`;
+    const localPath = join(invoiceDir, localName);
+
+    if (download.path && adbTryExecText(["-s", deviceId, "shell", "test", "-f", download.path]).ok) {
+      adbExec(["-s", deviceId, "pull", download.path, localPath]);
+    } else {
+      const content = adbTryExecBuffer(["-s", deviceId, "shell", "content", "read", "--uri", download.contentUri]);
+
+      if (!content.ok || content.stdout.length === 0) {
+        fail(`Unable to pull ${download.displayName} from ${download.path ?? download.contentUri}`);
+      }
+
+      writeFileSync(localPath, content.stdout);
+    }
+
+    if (index === 0) {
+      copyFileSync(localPath, join(artifactDir, "latest-invoice.pdf"));
+    }
+
+    return localPath;
+  });
+}
+
+function ensurePdfExtension(value: string): string {
+  return /\.pdf$/i.test(value) ? value : `${value}.pdf`;
 }
 
 function sanitizeFileName(value: string): string {

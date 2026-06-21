@@ -60,6 +60,19 @@ List recently changed files in Android shared/app storage:
 npm run blinkit:recent-files
 ```
 
+List invoice/download records registered with Android's Downloads provider, including Chrome-handled
+downloads:
+
+```bash
+npm run blinkit:list-downloads
+```
+
+Pull invoice-like records from Android's Downloads provider:
+
+```bash
+npm run blinkit:pull-downloads
+```
+
 Artifacts are written locally under:
 
 ```txt
@@ -135,7 +148,14 @@ If Blinkit exposes a **Download invoice** action, prefer this over screenshot/OC
    BLINKIT_RECENT_MINUTES=180 npm run blinkit:recent-files
    ```
 
-5. Open the latest pulled invoice:
+5. If the invoice opens in Chrome or appears under Chrome downloads, use the Downloads provider:
+
+   ```bash
+   npm run blinkit:list-downloads
+   npm run blinkit:pull-downloads
+   ```
+
+6. Open the latest pulled invoice:
 
    ```bash
    open artifacts/blinkit/latest-invoice.pdf
