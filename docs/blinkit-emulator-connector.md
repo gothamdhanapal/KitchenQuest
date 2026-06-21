@@ -73,6 +73,12 @@ Pull invoice-like records from Android's Downloads provider:
 npm run blinkit:pull-downloads
 ```
 
+Open Chrome's downloads page inside the emulator:
+
+```bash
+npm run blinkit:open-chrome-downloads
+```
+
 Artifacts are written locally under:
 
 ```txt
@@ -151,9 +157,13 @@ If Blinkit exposes a **Download invoice** action, prefer this over screenshot/OC
 5. If the invoice opens in Chrome or appears under Chrome downloads, use the Downloads provider:
 
    ```bash
+   npm run blinkit:open-chrome-downloads
    npm run blinkit:list-downloads
    npm run blinkit:pull-downloads
    ```
+
+   The filesystem search also checks Chrome app-specific external folders such as
+   `/sdcard/Android/data/com.android.chrome`.
 
 6. Open the latest pulled invoice:
 

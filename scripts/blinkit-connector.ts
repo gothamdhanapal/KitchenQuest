@@ -11,7 +11,8 @@ type Command =
   | "pull-invoices"
   | "recent-files"
   | "list-downloads"
-  | "pull-downloads";
+  | "pull-downloads"
+  | "open-chrome-downloads";
 
 const ADB_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 const BLINKIT_PACKAGE_FALLBACK = "com.grofers.customerapp";
@@ -26,6 +27,12 @@ const ANDROID_SEARCH_DIRS = [
   "/storage/emulated/0/Documents",
   "/sdcard/Android/data/com.grofers.customerapp",
   "/storage/emulated/0/Android/data/com.grofers.customerapp",
+  "/sdcard/Android/data/com.android.chrome",
+  "/storage/emulated/0/Android/data/com.android.chrome",
+  "/sdcard/Android/data/com.android.chrome/files",
+  "/storage/emulated/0/Android/data/com.android.chrome/files",
+  "/sdcard/Android/media/com.android.chrome",
+  "/storage/emulated/0/Android/media/com.android.chrome",
 ];
 const ANDROID_DOWNLOAD_PROVIDER_URIS = [
   "content://downloads/my_downloads",
@@ -51,10 +58,11 @@ function main() {
       "recent-files",
       "list-downloads",
       "pull-downloads",
+      "open-chrome-downloads",
     ].includes(command)
   ) {
     fail(
-      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, recent-files, list-downloads, or pull-downloads.`,
+      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, recent-files, list-downloads, pull-downloads, or open-chrome-downloads.`,
     );
   }
 
@@ -87,6 +95,22 @@ function main() {
     const packageName = candidatePackages[0] ?? BLINKIT_PACKAGE_FALLBACK;
     adbExec(["-s", deviceId, "shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"]);
     console.log(`Requested launch for ${packageName}.`);
+    return;
+  }
+
+  if (command === "open-chrome-downloads") {
+    adbExec([
+      "-s",
+      deviceId,
+      "shell",
+      "am",
+      "start",
+      "-n",
+      "com.android.chrome/com.google.android.apps.chrome.Main",
+      "-d",
+      "chrome://downloads",
+    ]);
+    console.log("Requested Chrome downloads page.");
     return;
   }
 
