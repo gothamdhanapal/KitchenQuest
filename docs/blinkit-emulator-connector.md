@@ -212,8 +212,13 @@ The parser writes:
 
 ```txt
 artifacts/blinkit/latest-invoice-text.txt
+artifacts/blinkit/latest-invoice-numbered-lines.txt
+artifacts/blinkit/latest-invoice-sections.json
+artifacts/blinkit/latest-invoice-tables.json
 artifacts/blinkit/latest-invoice-parse.json
 ```
 
 `latest-invoice-parse.json` contains invoice metadata plus candidate item/price lines. If candidates
-are missing or noisy, inspect `latest-invoice-text.txt` and tune `src/lib/invoices/blinkit-invoice.ts`.
+are missing or noisy, inspect `latest-invoice-sections.json` first. It contains snippets around likely
+item table headers. If that is not enough, use `latest-invoice-numbered-lines.txt` to identify the
+line range that contains item names/prices and tune `src/lib/invoices/blinkit-invoice.ts`.

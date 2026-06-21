@@ -4,6 +4,12 @@ import { PDFParse } from "pdf-parse";
 export type BlinkitInvoiceParseResult = {
   sourcePath: string;
   text: string;
+  pages: Array<{ pageNumber: number; text: string; lineCount: number }>;
+  tables: string[][][];
+  debug: {
+    numberedLines: string[];
+    likelyItemSections: Array<{ title: string; lines: string[] }>;
+  };
   metadata: {
     orderId: string | null;
     orderDate: string | null;
@@ -24,14 +30,30 @@ export async function parseBlinkitInvoicePdf(sourcePath: string): Promise<Blinki
   const parser = new PDFParse({ data });
 
   try {
-    const result = await parser.getText();
-    const text = normalizeExtractedText(result.text);
+    const [textResult, tableResult] = await Promise.all([parser.getText(), parser.getTable().catch(() => null)]);
+    const text = normalizeExtractedText(textResult.text);
+    const pages = textResult.pages.map((page) => {
+      const pageText = normalizeExtractedText(page.text);
+
+      return {
+        pageNumber: page.num,
+        text: pageText,
+        lineCount: splitMeaningfulLines(pageText).length,
+      };
+    });
+    const tables = tableResult?.mergedTables ?? [];
 
     return {
       sourcePath,
       text,
+      pages,
+      tables,
+      debug: {
+        numberedLines: splitMeaningfulLines(text).map((line, index) => `${String(index + 1).padStart(4, "0")}: ${line}`),
+        likelyItemSections: extractLikelyItemSections(text),
+      },
       metadata: extractInvoiceMetadata(text),
-      lineCandidates: extractLineCandidates(text),
+      lineCandidates: extractLineCandidates(text, tables),
     };
   } finally {
     await parser.destroy();
@@ -58,14 +80,14 @@ export function extractInvoiceMetadata(text: string): BlinkitInvoiceParseResult[
   };
 }
 
-export function extractLineCandidates(text: string): BlinkitInvoiceLineCandidate[] {
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const candidates = lines
-    .filter((line) => /(₹|rs\.?|\bqty\b|\bquantity\b|\d+\s*x\s+)/i.test(line))
-    .filter((line) => !/grand total|total amount|amount paid|invoice total|delivery charge|handling charge/i.test(line))
+export function extractLineCandidates(text: string, tables: string[][][] = []): BlinkitInvoiceLineCandidate[] {
+  const tableCandidates = tables.flatMap((table) =>
+    table
+      .map((row) => row.map((cell) => cell.trim()).filter(Boolean).join(" | "))
+      .filter(isLikelyItemLine),
+  );
+  const textCandidates = splitMeaningfulLines(text).filter(isLikelyItemLine);
+  const candidates = [...tableCandidates, ...textCandidates]
     .map((line) => ({
       line,
       quantity: parseQuantity(line),
@@ -73,6 +95,42 @@ export function extractLineCandidates(text: string): BlinkitInvoiceLineCandidate
     }));
 
   return dedupeCandidates(candidates);
+}
+
+export function splitMeaningfulLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function extractLikelyItemSections(text: string): Array<{ title: string; lines: string[] }> {
+  const lines = splitMeaningfulLines(text);
+  const headerIndexes = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => /description|particulars|item|product|qty|quantity|mrp|rate|amount|taxable|hsn/i.test(line));
+
+  return headerIndexes.slice(0, 8).map(({ line, index }) => ({
+    title: line,
+    lines: lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 18)),
+  }));
+}
+
+function isLikelyItemLine(line: string): boolean {
+  if (isKnownNonItemLine(line)) {
+    return false;
+  }
+
+  const hasCurrency = /(?:₹|rs\.?)\s*[\d,.]+/i.test(line);
+  const hasQuantity = /\b(?:qty|quantity)\b|\b\d+(?:\.\d+)?\s*(?:x|pcs?|g|kg|ml|l|unit|pack)\b/i.test(line);
+  const hasMultipleNumericColumns = (line.match(/\b\d+(?:\.\d+)?\b/g) ?? []).length >= 2;
+  const hasLetters = /[a-zA-Z]/.test(line);
+
+  return hasLetters && (hasCurrency || (hasQuantity && hasMultipleNumericColumns));
+}
+
+function isKnownNonItemLine(line: string): boolean {
+  return /grand total|total amount|amount paid|invoice total|delivery charge|handling charge|platform fee|tax invoice|sold by|bill to|ship to|customer|address|gstin|cin|fssai|payment|page \d+|terms|conditions/i.test(line);
 }
 
 function parseQuantity(line: string): number | null {
