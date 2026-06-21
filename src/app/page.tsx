@@ -111,6 +111,15 @@ export default async function Home({ searchParams }: HomeProps) {
                   </button>
                 </div>
               </form>
+              <form action="/api/ingest/blinkit-invoices" method="post" className="mt-4 border-t border-green-100 pt-4">
+                <p className="text-sm text-slate-600">
+                  Local dev only: import Blinkit invoice PDFs from <code>artifacts/blinkit</code> after exporting
+                  invoices from the emulator or Drive.
+                </p>
+                <button className="mt-3 rounded-xl bg-sky-700 px-4 py-2 text-sm font-bold text-white">
+                  Import local Blinkit invoices
+                </button>
+              </form>
             </Card>
 
             <Card title="Items to buy">
@@ -267,6 +276,7 @@ function getImportMessage(params: Record<string, string | string[] | undefined> 
   }
 
   const days = getFirstParam(params?.days) ?? "7";
+  const importWindow = days === "invoice" ? "local invoice import" : `the last ${days} day(s)`;
   const emails = getFirstParam(params?.emails) ?? "0";
   const items = getFirstParam(params?.items) ?? "0";
   const inserted = getFirstParam(params?.inserted) ?? "0";
@@ -275,15 +285,15 @@ function getImportMessage(params: Record<string, string | string[] | undefined> 
 
   if (status === "partial") {
     const message = getFirstParam(params?.message);
-    return `Imported with warnings over the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}${message ? ` First warning: ${message}` : ""}`;
+    return `Imported with warnings for ${importWindow}: scanned ${emails} source(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}${message ? ` First warning: ${message}` : ""}`;
   }
 
   if (status === "complete") {
     if (emails === "0") {
-      return `Import complete, but no matching Instamart or Blinkit emails were found in the last ${days} day(s).${retailerDetails} Try "Last 7 days" if you only scanned today.`;
+      return `Import complete, but no matching sources were found for ${importWindow}.${retailerDetails} Try "Last 7 days" if you only scanned today.`;
     }
 
-    return `Import complete for the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}`;
+    return `Import complete for ${importWindow}: scanned ${emails} source(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}`;
   }
 
   return null;

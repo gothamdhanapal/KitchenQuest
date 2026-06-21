@@ -222,3 +222,11 @@ artifacts/blinkit/latest-invoice-parse.json
 are missing or noisy, inspect `latest-invoice-sections.json` first. It contains snippets around likely
 item table headers. If that is not enough, use `latest-invoice-numbered-lines.txt` to identify the
 line range that contains item names/prices and tune `src/lib/invoices/blinkit-invoice.ts`.
+
+Once `artifacts/blinkit/latest-invoice.pdf` or files under `artifacts/blinkit/invoices/` are parseable,
+the FreshLoop dashboard can import them with **Import local Blinkit invoices**. This writes rows to
+`purchase_log`, sends unmatched products to Needs Review, and updates matched stock.
+
+The remaining automation step is navigating Blinkit order history for the requested day range and
+triggering **Download invoice** for each order. That should be implemented in the local connector
+after collecting stable coordinates or a reliable UI flow from the emulator order-history screens.

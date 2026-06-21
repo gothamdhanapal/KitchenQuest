@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { PDFParse } from "pdf-parse";
+import type { ParsedLineItem } from "@/lib/types";
 
 export type BlinkitInvoiceParseResult = {
   sourcePath: string;
@@ -17,12 +18,14 @@ export type BlinkitInvoiceParseResult = {
     totalAmount: number | null;
   };
   lineCandidates: BlinkitInvoiceLineCandidate[];
+  parsedItems: ParsedLineItem[];
 };
 
 export type BlinkitInvoiceLineCandidate = {
   line: string;
   quantity: number | null;
   price: number | null;
+  rawName: string | null;
 };
 
 export async function parseBlinkitInvoicePdf(sourcePath: string): Promise<BlinkitInvoiceParseResult> {
@@ -43,6 +46,9 @@ export async function parseBlinkitInvoicePdf(sourcePath: string): Promise<Blinki
     });
     const tables = tableResult?.mergedTables ?? [];
 
+    const metadata = extractInvoiceMetadata(text);
+    const lineCandidates = extractLineCandidates(text, tables);
+
     return {
       sourcePath,
       text,
@@ -52,8 +58,9 @@ export async function parseBlinkitInvoicePdf(sourcePath: string): Promise<Blinki
         numberedLines: splitMeaningfulLines(text).map((line, index) => `${String(index + 1).padStart(4, "0")}: ${line}`),
         likelyItemSections: extractLikelyItemSections(text),
       },
-      metadata: extractInvoiceMetadata(text),
-      lineCandidates: extractLineCandidates(text, tables),
+      metadata,
+      lineCandidates,
+      parsedItems: extractParsedLineItems(lineCandidates, tables, parseInvoiceDate(metadata.orderDate)),
     };
   } finally {
     await parser.destroy();
@@ -92,9 +99,29 @@ export function extractLineCandidates(text: string, tables: string[][][] = []): 
       line,
       quantity: parseQuantity(line),
       price: parseCurrency(firstMatch(line, /(?:₹|rs\.?)\s*([\d,.]+)/i)),
+      rawName: parseProductNameFromLine(line),
     }));
 
   return dedupeCandidates(candidates);
+}
+
+export function extractParsedLineItems(
+  lineCandidates: BlinkitInvoiceLineCandidate[],
+  tables: string[][][] = [],
+  orderDate = new Date(),
+): ParsedLineItem[] {
+  const tableItems = extractItemsFromTables(tables, orderDate);
+  const lineItems = lineCandidates
+    .filter((candidate) => candidate.rawName && candidate.price !== null)
+    .map((candidate) => ({
+      retailer: "blinkit" as const,
+      rawName: candidate.rawName ?? candidate.line,
+      quantity: candidate.quantity ?? 1,
+      price: candidate.price,
+      orderDate,
+    }));
+
+  return dedupeParsedItems([...tableItems, ...lineItems]);
 }
 
 export function splitMeaningfulLines(text: string): string[] {
@@ -133,6 +160,109 @@ function isKnownNonItemLine(line: string): boolean {
   return /grand total|total amount|amount paid|invoice total|delivery charge|handling charge|platform fee|tax invoice|sold by|bill to|ship to|customer|address|gstin|cin|fssai|payment|page \d+|terms|conditions/i.test(line);
 }
 
+function extractItemsFromTables(tables: string[][][], orderDate: Date): ParsedLineItem[] {
+  return tables.flatMap((table) => {
+    const headerIndex = table.findIndex((row) =>
+      row.some((cell) => /description|particulars|item|product|qty|quantity|amount|total/i.test(cell)),
+    );
+
+    if (headerIndex === -1) {
+      return [];
+    }
+
+    const header = table[headerIndex].map(normalizeHeaderCell);
+    const itemIndex = findHeaderIndex(header, /description|particulars|item|product|name/);
+    const quantityIndex = findHeaderIndex(header, /qty|quantity/);
+    const priceIndex = findLastHeaderIndex(header, /amount|total|price|net/);
+
+    if (itemIndex === -1) {
+      return [];
+    }
+
+    return table
+      .slice(headerIndex + 1)
+      .map((row) => parseTableItemRow(row, { itemIndex, quantityIndex, priceIndex }, orderDate))
+      .filter((item): item is ParsedLineItem => item !== null);
+  });
+}
+
+function parseTableItemRow(
+  row: string[],
+  indexes: { itemIndex: number; quantityIndex: number; priceIndex: number },
+  orderDate: Date,
+): ParsedLineItem | null {
+  const cells = row.map((cell) => cell.trim()).filter(Boolean);
+  if (cells.length === 0 || cells.some((cell) => /grand total|total amount|delivery charge|handling charge/i.test(cell))) {
+    return null;
+  }
+
+  const rawName = cleanProductName(cells[indexes.itemIndex] ?? "");
+  if (!rawName || !/[a-zA-Z]/.test(rawName)) {
+    return null;
+  }
+
+  const quantity = indexes.quantityIndex >= 0 ? parseQuantity(cells[indexes.quantityIndex]) : parseQuantity(cells.join(" "));
+  const price =
+    (indexes.priceIndex >= 0 ? parseAnyNumber(cells[indexes.priceIndex]) : null) ??
+    parseRightmostCurrencyOrNumber(cells);
+
+  if (price === null) {
+    return null;
+  }
+
+  return {
+    retailer: "blinkit",
+    rawName,
+    quantity: quantity ?? 1,
+    price,
+    orderDate,
+  };
+}
+
+function parseProductNameFromLine(line: string): string | null {
+  const parts = line
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidate = parts.length > 1 ? parts.find((part) => /[a-zA-Z]/.test(part) && !isKnownNonItemLine(part)) : line;
+
+  if (!candidate) {
+    return null;
+  }
+
+  return cleanProductName(
+    candidate
+      .replace(/(?:₹|rs\.?)\s*[\d,.]+/gi, " ")
+      .replace(/\b(?:qty|quantity)\s*[:x-]?\s*\d+(?:\.\d+)?\b/gi, " ")
+      .replace(/\b\d+(?:\.\d+)?\s*x\b/gi, " "),
+  );
+}
+
+function cleanProductName(value: string): string {
+  return value
+    .replace(/\b(?:hsn|sku|qty|quantity|mrp|rate|amount|total|price)\b\s*[:#-]?\s*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeHeaderCell(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function findHeaderIndex(header: string[], pattern: RegExp): number {
+  return header.findIndex((cell) => pattern.test(cell));
+}
+
+function findLastHeaderIndex(header: string[], pattern: RegExp): number {
+  for (let index = header.length - 1; index >= 0; index -= 1) {
+    if (pattern.test(header[index])) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function parseQuantity(line: string): number | null {
   const rawQuantity =
     firstMatch(line, /\bqty\s*[:x-]?\s*(\d+(?:\.\d+)?)/i) ??
@@ -156,6 +286,41 @@ function parseCurrency(value: string | null): number | null {
   return Number.isFinite(amount) ? amount : null;
 }
 
+function parseRightmostCurrencyOrNumber(cells: string[]): number | null {
+  for (let index = cells.length - 1; index >= 0; index -= 1) {
+    const amount = parseCurrency(firstMatch(cells[index], /(?:₹|rs\.?)\s*([\d,.]+)/i)) ?? parseAnyNumber(cells[index]);
+
+    if (amount !== null) {
+      return amount;
+    }
+  }
+
+  return null;
+}
+
+function parseAnyNumber(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/,/g, "").trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseInvoiceDate(value: string | null): Date {
+  if (!value) {
+    return new Date();
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 function firstMatch(value: string, pattern: RegExp): string | null {
   return value.match(pattern)?.[1]?.trim() ?? null;
 }
@@ -164,7 +329,21 @@ function dedupeCandidates(candidates: BlinkitInvoiceLineCandidate[]): BlinkitInv
   const seen = new Set<string>();
 
   return candidates.filter((candidate) => {
-    const key = `${candidate.line}|${candidate.quantity ?? ""}|${candidate.price ?? ""}`;
+    const key = `${candidate.line}|${candidate.quantity ?? ""}|${candidate.price ?? ""}|${candidate.rawName ?? ""}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeParsedItems(items: ParsedLineItem[]): ParsedLineItem[] {
+  const seen = new Set<string>();
+
+  return items.filter((item) => {
+    const key = `${item.rawName.toLowerCase()}|${item.quantity}|${item.price ?? ""}`;
     if (seen.has(key)) {
       return false;
     }

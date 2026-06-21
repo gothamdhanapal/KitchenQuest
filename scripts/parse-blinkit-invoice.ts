@@ -26,6 +26,7 @@ async function main() {
         metadata: result.metadata,
         pages: result.pages,
         lineCandidates: result.lineCandidates,
+        parsedItems: result.parsedItems,
         debugArtifacts: {
           textPath,
           numberedTextPath,
@@ -46,9 +47,12 @@ async function main() {
   console.log("Parse JSON:", jsonPath);
   console.log("Order ID:", result.metadata.orderId ?? "not found");
   console.log("Line candidates:", result.lineCandidates.length);
+  console.log("Parsed items:", result.parsedItems.length);
 
   if (result.lineCandidates.length === 0) {
     console.log("No line candidates found. Inspect latest-invoice-sections.json and latest-invoice-numbered-lines.txt to tune the invoice parser.");
+  } else if (result.parsedItems.length === 0) {
+    console.log("Line candidates were found, but no parsed items were produced. Inspect latest-invoice-parse.json to tune row parsing.");
   }
 }
 
