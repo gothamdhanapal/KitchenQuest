@@ -13,7 +13,9 @@
     "blinkit:diagnose": "tsx scripts/blinkit-connector.ts diagnose",
     "blinkit:open": "tsx scripts/blinkit-connector.ts open",
     "blinkit:capture": "tsx scripts/blinkit-connector.ts capture",
-    "blinkit:dump-ui": "tsx scripts/blinkit-connector.ts dump-ui"
+    "blinkit:dump-ui": "tsx scripts/blinkit-connector.ts dump-ui",
+    "blinkit:list-invoices": "tsx scripts/blinkit-connector.ts list-invoices",
+    "blinkit:pull-invoices": "tsx scripts/blinkit-connector.ts pull-invoices"
   },
   "repository": {
     "type": "git",

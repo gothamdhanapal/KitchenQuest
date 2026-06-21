@@ -1,11 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-type Command = "diagnose" | "capture" | "dump-ui" | "open";
+type Command = "diagnose" | "capture" | "dump-ui" | "open" | "list-invoices" | "pull-invoices";
 
 const ADB_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 const BLINKIT_PACKAGE_FALLBACK = "com.grofers.customerapp";
+const ANDROID_DOWNLOAD_DIRS = [
+  "/sdcard/Download",
+  "/sdcard/Downloads",
+  "/storage/emulated/0/Download",
+  "/storage/emulated/0/Downloads",
+  "/sdcard/Documents",
+  "/storage/emulated/0/Documents",
+];
 
 const command = (process.argv[2] ?? "diagnose") as Command;
 const artifactDir = resolve(process.cwd(), "artifacts", "blinkit");
@@ -14,8 +22,8 @@ const adb = resolveAdbPath();
 main();
 
 function main() {
-  if (!["diagnose", "capture", "dump-ui", "open"].includes(command)) {
-    fail(`Unknown command "${command}". Use diagnose, capture, dump-ui, or open.`);
+  if (!["diagnose", "capture", "dump-ui", "open", "list-invoices", "pull-invoices"].includes(command)) {
+    fail(`Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, or pull-invoices.`);
   }
 
   ensureArtifactDir();
@@ -38,8 +46,8 @@ function main() {
     console.log("");
     console.log("Next:");
     console.log("1. Open Blinkit order history/order details in the emulator.");
-    console.log("2. Run `npm run blinkit:capture`.");
-    console.log("3. Share artifacts/blinkit/latest-text.json if the text extraction misses order details.");
+    console.log("2. If an invoice PDF is available, download it in the emulator and run `npm run blinkit:pull-invoices`.");
+    console.log("3. Otherwise run `npm run blinkit:capture`.");
     return;
   }
 
@@ -47,6 +55,39 @@ function main() {
     const packageName = candidatePackages[0] ?? BLINKIT_PACKAGE_FALLBACK;
     adbExec(["-s", deviceId, "shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"]);
     console.log(`Requested launch for ${packageName}.`);
+    return;
+  }
+
+  if (command === "list-invoices") {
+    const invoices = listInvoiceCandidates(deviceId);
+    writeInvoiceManifest(invoices);
+
+    if (invoices.length === 0) {
+      console.log("No PDF candidates found in common Android download directories.");
+      return;
+    }
+
+    console.log("PDF candidates:");
+    invoices.forEach((invoice, index) => {
+      console.log(`${index + 1}. ${invoice.path} (${invoice.sizeBytes} bytes, ${invoice.modifiedAt})`);
+    });
+    console.log("Manifest:", join(artifactDir, "invoice-candidates.json"));
+    return;
+  }
+
+  if (command === "pull-invoices") {
+    const invoices = listInvoiceCandidates(deviceId);
+    writeInvoiceManifest(invoices);
+
+    if (invoices.length === 0) {
+      fail("No PDF candidates found. Tap Download invoice in Blinkit, then run this command again.");
+    }
+
+    const pulled = pullInvoices(deviceId, invoices);
+    console.log("Pulled invoice PDFs:");
+    pulled.forEach((path) => console.log(`- ${path}`));
+    console.log("Latest invoice:", join(artifactDir, "latest-invoice.pdf"));
+    console.log("Manifest:", join(artifactDir, "invoice-candidates.json"));
     return;
   }
 
@@ -139,6 +180,97 @@ function listBlinkitCandidatePackages(deviceId: string): string[] {
   return packageNames.filter((packageName) =>
     /(blinkit|grofers|locodel|zomato)/i.test(packageName),
   );
+}
+
+type InvoiceCandidate = {
+  path: string;
+  fileName: string;
+  sizeBytes: number;
+  modifiedAt: string;
+};
+
+function listInvoiceCandidates(deviceId: string): InvoiceCandidate[] {
+  const candidates: InvoiceCandidate[] = [];
+
+  for (const directory of ANDROID_DOWNLOAD_DIRS) {
+    const result = adbTryExecText([
+      "-s",
+      deviceId,
+      "shell",
+      "find",
+      directory,
+      "-maxdepth",
+      "2",
+      "-type",
+      "f",
+      "-iname",
+      "*.pdf",
+      "-printf",
+      "%T@|%s|%p\n",
+    ]);
+
+    if (!result.ok) {
+      continue;
+    }
+
+    result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const [modifiedEpoch, size, path] = line.split("|");
+        if (!path) {
+          return;
+        }
+
+        candidates.push({
+          path,
+          fileName: path.split("/").pop() ?? "invoice.pdf",
+          sizeBytes: Number(size) || 0,
+          modifiedAt: new Date(Number(modifiedEpoch) * 1000).toISOString(),
+        });
+      });
+  }
+
+  return dedupeInvoices(candidates).sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt));
+}
+
+function dedupeInvoices(invoices: InvoiceCandidate[]): InvoiceCandidate[] {
+  const seen = new Set<string>();
+
+  return invoices.filter((invoice) => {
+    if (seen.has(invoice.path)) {
+      return false;
+    }
+
+    seen.add(invoice.path);
+    return true;
+  });
+}
+
+function writeInvoiceManifest(invoices: InvoiceCandidate[]) {
+  writeFileSync(join(artifactDir, "invoice-candidates.json"), `${JSON.stringify(invoices, null, 2)}\n`);
+}
+
+function pullInvoices(deviceId: string, invoices: InvoiceCandidate[]): string[] {
+  const invoiceDir = join(artifactDir, "invoices");
+  mkdirSync(invoiceDir, { recursive: true });
+
+  return invoices.map((invoice, index) => {
+    const localName = `${String(index + 1).padStart(2, "0")}-${sanitizeFileName(invoice.fileName)}`;
+    const localPath = join(invoiceDir, localName);
+    adbExec(["-s", deviceId, "pull", invoice.path, localPath]);
+
+    if (index === 0) {
+      copyFileSync(localPath, join(artifactDir, "latest-invoice.pdf"));
+    }
+
+    return localPath;
+  });
+}
+
+function sanitizeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
 function captureScreenshot(deviceId: string): string {
@@ -262,13 +394,27 @@ function readTextFile(path: string): string {
 }
 
 function adbExec(args: string[]): string {
-  const result = spawnSync(adb, args, { encoding: "utf8", maxBuffer: ADB_MAX_BUFFER_BYTES });
+  const result = adbTryExecText(args);
 
-  if (result.status !== 0) {
-    fail(formatAdbError(args, result.stderr, result.error));
+  if (!result.ok) {
+    fail(result.error);
   }
 
   return result.stdout;
+}
+
+function adbTryExecText(args: string[]): { ok: true; stdout: string } | { ok: false; stdout: string; error: string } {
+  const result = spawnSync(adb, args, { encoding: "utf8", maxBuffer: ADB_MAX_BUFFER_BYTES });
+
+  if (result.status !== 0 || result.error) {
+    return {
+      ok: false,
+      stdout: result.stdout,
+      error: formatAdbError(args, result.stderr, result.error),
+    };
+  }
+
+  return { ok: true, stdout: result.stdout };
 }
 
 function adbTryExecBuffer(args: string[]): { ok: true; stdout: Buffer } | { ok: false; stdout: Buffer; error: string } {

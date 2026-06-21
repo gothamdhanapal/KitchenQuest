@@ -42,10 +42,30 @@ Only dump the current Android UI hierarchy:
 npm run blinkit:dump-ui
 ```
 
+List downloaded invoice PDFs in common Android download folders:
+
+```bash
+npm run blinkit:list-invoices
+```
+
+Pull downloaded invoice PDFs into local artifacts:
+
+```bash
+npm run blinkit:pull-invoices
+```
+
 Artifacts are written locally under:
 
 ```txt
 artifacts/blinkit/
+```
+
+Pulled invoice PDFs are written under:
+
+```txt
+artifacts/blinkit/invoices/
+artifacts/blinkit/latest-invoice.pdf
+artifacts/blinkit/invoice-candidates.json
 ```
 
 The most useful file for the next parser iteration is:
@@ -81,3 +101,25 @@ network/session connector.
 
 If `latest-text.json` does not contain the product names/prices, the next step is OCR from
 `artifacts/blinkit/latest.png`.
+
+## Invoice workflow
+
+If Blinkit exposes a **Download invoice** action, prefer this over screenshot/OCR:
+
+1. Open a delivered Blinkit order in the emulator.
+2. Tap **Download invoice**.
+3. Run:
+
+   ```bash
+   npm run blinkit:list-invoices
+   npm run blinkit:pull-invoices
+   ```
+
+4. Open the latest pulled invoice:
+
+   ```bash
+   open artifacts/blinkit/latest-invoice.pdf
+   ```
+
+The invoice PDF should contain structured order details, line items, prices, timestamps, and
+address information. This is a better source for FreshLoop ingestion than UI screenshots.
