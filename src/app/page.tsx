@@ -9,6 +9,7 @@ type HomeProps = {
 export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
   const authMessage = getAuthMessage(params);
+  const importMessage = getImportMessage(params);
   const data = await getDashboardData();
 
   if (data.mode === "signed_out") {
@@ -65,6 +66,12 @@ export default async function Home({ searchParams }: HomeProps) {
           </div>
         </header>
 
+        {importMessage ? (
+          <p className="rounded-3xl bg-lime-50 p-4 text-sm font-semibold text-green-950 ring-1 ring-lime-200">
+            {importMessage}
+          </p>
+        ) : null}
+
         <section className="grid gap-4 md:grid-cols-4">
           <Stat label="Active Gmail accounts" value={String(data.gmailConnections)} />
           <Stat label="Expiring soon" value={String(expiringSoonCount)} tone="amber" />
@@ -83,22 +90,46 @@ export default async function Home({ searchParams }: HomeProps) {
             </div>
           </Card>
 
-          <Card title="Items to buy">
-            <div className="flex flex-col gap-3">
-              {itemsToBuy.length === 0 ? (
-                <EmptyState message="All essential refill items currently have stock." />
-              ) : (
-                itemsToBuy.map((item) => (
-                  <div key={item.id} className="rounded-2xl border border-green-100 bg-white p-4">
-                    <p className="font-semibold text-green-950">{item.item_name}</p>
-                    <p className="text-sm text-slate-500">
-                      {item.category} · default {item.default_shelf_life_days} days
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
+          <div className="flex flex-col gap-6">
+            <Card title="Import recent orders">
+              <form action="/api/ingest/backfill" method="post" className="flex flex-col gap-3">
+                <p className="text-sm text-slate-600">
+                  Re-scan connected Gmail accounts for recent Instamart and Blinkit orders. Imports are capped at
+                  7 days and repeated scans will skip already logged purchases.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <select
+                    name="lookbackDays"
+                    defaultValue="7"
+                    className="min-w-0 flex-1 rounded-xl border border-green-100 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="1">Today / last 24 hours</option>
+                    <option value="7">Last 7 days</option>
+                  </select>
+                  <button className="rounded-xl bg-green-800 px-4 py-2 text-sm font-bold text-white">
+                    Pull orders
+                  </button>
+                </div>
+              </form>
+            </Card>
+
+            <Card title="Items to buy">
+              <div className="flex flex-col gap-3">
+                {itemsToBuy.length === 0 ? (
+                  <EmptyState message="All essential refill items currently have stock." />
+                ) : (
+                  itemsToBuy.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-green-100 bg-white p-4">
+                      <p className="font-semibold text-green-950">{item.item_name}</p>
+                      <p className="text-sm text-slate-500">
+                        {item.category} · default {item.default_shelf_life_days} days
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -210,6 +241,43 @@ function getAuthMessage(params: Record<string, string | string[] | undefined> | 
   if (auth === "sign_in_failed") {
     const message = getFirstParam(params?.message);
     return message ? `Supabase sign-in failed: ${message}` : "Supabase sign-in failed. Check the terminal logs.";
+  }
+
+  return null;
+}
+
+function getImportMessage(params: Record<string, string | string[] | undefined> | undefined): string | null {
+  const status = getFirstParam(params?.import);
+
+  if (!status) {
+    return null;
+  }
+
+  if (status === "no_connections") {
+    return "Connect Gmail before importing recent orders.";
+  }
+
+  if (status === "not_authenticated") {
+    return "Sign in before importing recent orders.";
+  }
+
+  if (status === "failed") {
+    const message = getFirstParam(params?.message);
+    return message ? `Import failed: ${message}` : "Import failed. Check the terminal logs.";
+  }
+
+  const days = getFirstParam(params?.days) ?? "7";
+  const emails = getFirstParam(params?.emails) ?? "0";
+  const items = getFirstParam(params?.items) ?? "0";
+  const inserted = getFirstParam(params?.inserted) ?? "0";
+
+  if (status === "partial") {
+    const message = getFirstParam(params?.message);
+    return `Imported with warnings over the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).${message ? ` First warning: ${message}` : ""}`;
+  }
+
+  if (status === "complete") {
+    return `Import complete for the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).`;
   }
 
   return null;
