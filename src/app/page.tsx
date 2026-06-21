@@ -2,11 +2,17 @@ import { getDashboardData } from "@/lib/dashboard";
 import { getExpiryState } from "@/lib/expiry";
 import type { InventoryItem, InventoryStock, PurchaseLog } from "@/lib/types";
 
-export default async function Home() {
+type HomeProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Home({ searchParams }: HomeProps) {
+  const params = await searchParams;
+  const authMessage = getAuthMessage(params);
   const data = await getDashboardData();
 
   if (data.mode === "signed_out") {
-    return <SignedOut />;
+    return <SignedOut authMessage={authMessage} />;
   }
 
   const totalByItem = getTotalStockByItem(data.stock);
@@ -119,7 +125,7 @@ export default async function Home() {
   );
 }
 
-function SignedOut() {
+function SignedOut({ authMessage }: Readonly<{ authMessage: string | null }>) {
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
       <section className="w-full max-w-md rounded-[2rem] bg-white p-8 shadow-xl shadow-green-950/10">
@@ -128,6 +134,11 @@ function SignedOut() {
         <p className="mt-3 text-slate-600">
           Enter one of the household email addresses. Supabase will send a magic link.
         </p>
+        {authMessage ? (
+          <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-sm font-medium text-amber-900 ring-1 ring-amber-100">
+            {authMessage}
+          </p>
+        ) : null}
         <form action="/api/auth/sign-in" method="post" className="mt-6 flex flex-col gap-3">
           <input
             name="email"
@@ -141,6 +152,29 @@ function SignedOut() {
       </section>
     </main>
   );
+}
+
+function getAuthMessage(params: Record<string, string | string[] | undefined> | undefined): string | null {
+  const auth = getFirstParam(params?.auth);
+
+  if (auth === "check_email") {
+    return "Check your email for the FreshLoop magic link.";
+  }
+
+  if (auth === "missing_email") {
+    return "Please enter an email address.";
+  }
+
+  if (auth === "sign_in_failed") {
+    const message = getFirstParam(params?.message);
+    return message ? `Supabase sign-in failed: ${message}` : "Supabase sign-in failed. Check the terminal logs.";
+  }
+
+  return null;
+}
+
+function getFirstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function Card({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) {
