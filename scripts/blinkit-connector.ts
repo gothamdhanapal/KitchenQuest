@@ -2,17 +2,28 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-type Command = "diagnose" | "capture" | "dump-ui" | "open" | "list-invoices" | "pull-invoices";
+type Command =
+  | "diagnose"
+  | "capture"
+  | "dump-ui"
+  | "open"
+  | "list-invoices"
+  | "pull-invoices"
+  | "recent-files";
 
 const ADB_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 const BLINKIT_PACKAGE_FALLBACK = "com.grofers.customerapp";
-const ANDROID_DOWNLOAD_DIRS = [
+const ANDROID_SEARCH_DIRS = [
+  "/sdcard",
+  "/storage/emulated/0",
   "/sdcard/Download",
   "/sdcard/Downloads",
   "/storage/emulated/0/Download",
   "/storage/emulated/0/Downloads",
   "/sdcard/Documents",
   "/storage/emulated/0/Documents",
+  "/sdcard/Android/data/com.grofers.customerapp",
+  "/storage/emulated/0/Android/data/com.grofers.customerapp",
 ];
 
 const command = (process.argv[2] ?? "diagnose") as Command;
@@ -22,8 +33,10 @@ const adb = resolveAdbPath();
 main();
 
 function main() {
-  if (!["diagnose", "capture", "dump-ui", "open", "list-invoices", "pull-invoices"].includes(command)) {
-    fail(`Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, or pull-invoices.`);
+  if (!["diagnose", "capture", "dump-ui", "open", "list-invoices", "pull-invoices", "recent-files"].includes(command)) {
+    fail(
+      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, or recent-files.`,
+    );
   }
 
   ensureArtifactDir();
@@ -63,7 +76,8 @@ function main() {
     writeInvoiceManifest(invoices);
 
     if (invoices.length === 0) {
-      console.log("No PDF candidates found in common Android download directories.");
+      console.log("No PDF candidates found in Android shared/app storage.");
+      console.log("Try `npm run blinkit:recent-files` immediately after tapping Download invoice.");
       return;
     }
 
@@ -80,7 +94,7 @@ function main() {
     writeInvoiceManifest(invoices);
 
     if (invoices.length === 0) {
-      fail("No PDF candidates found. Tap Download invoice in Blinkit, then run this command again.");
+      fail("No PDF candidates found. Tap Download invoice in Blinkit, then try `npm run blinkit:recent-files`.");
     }
 
     const pulled = pullInvoices(deviceId, invoices);
@@ -88,6 +102,23 @@ function main() {
     pulled.forEach((path) => console.log(`- ${path}`));
     console.log("Latest invoice:", join(artifactDir, "latest-invoice.pdf"));
     console.log("Manifest:", join(artifactDir, "invoice-candidates.json"));
+    return;
+  }
+
+  if (command === "recent-files") {
+    const files = listRecentFiles(deviceId);
+    writeFileManifest("recent-files.json", files);
+
+    if (files.length === 0) {
+      console.log("No recent files found in Android shared/app storage.");
+      return;
+    }
+
+    console.log("Recent files:");
+    files.slice(0, 50).forEach((file, index) => {
+      console.log(`${index + 1}. ${file.path} (${file.sizeBytes} bytes, ${file.modifiedAt})`);
+    });
+    console.log("Manifest:", join(artifactDir, "recent-files.json"));
     return;
   }
 
@@ -189,53 +220,77 @@ type InvoiceCandidate = {
   modifiedAt: string;
 };
 
-function listInvoiceCandidates(deviceId: string): InvoiceCandidate[] {
-  const candidates: InvoiceCandidate[] = [];
+type AndroidFileCandidate = {
+  path: string;
+  fileName: string;
+  sizeBytes: number;
+  modifiedAt: string;
+};
 
-  for (const directory of ANDROID_DOWNLOAD_DIRS) {
-    const result = adbTryExecText([
-      "-s",
-      deviceId,
-      "shell",
-      "find",
-      directory,
-      "-maxdepth",
-      "2",
-      "-type",
-      "f",
-      "-iname",
-      "*.pdf",
-      "-printf",
-      "%T@|%s|%p\n",
-    ]);
+function listInvoiceCandidates(deviceId: string): InvoiceCandidate[] {
+  return listAndroidFiles(deviceId, {
+    maxDepth: 6,
+    minutes: 24 * 60 * 14,
+    nameExpression: "\\( -iname '*.pdf' -o -iname '*invoice*' -o -iname '*receipt*' -o -iname '*bill*' \\)",
+  }).filter(isLikelyInvoiceFile);
+}
+
+function listRecentFiles(deviceId: string): AndroidFileCandidate[] {
+  return listAndroidFiles(deviceId, {
+    maxDepth: 6,
+    minutes: Number(process.env.BLINKIT_RECENT_MINUTES ?? 60),
+    nameExpression: "",
+  });
+}
+
+function listAndroidFiles(
+  deviceId: string,
+  options: { maxDepth: number; minutes: number; nameExpression: string },
+): AndroidFileCandidate[] {
+  const candidates: AndroidFileCandidate[] = [];
+
+  for (const directory of ANDROID_SEARCH_DIRS) {
+    const nameFilter = options.nameExpression ? ` ${options.nameExpression}` : "";
+    const command = `find ${shellQuote(directory)} -maxdepth ${options.maxDepth} -type f -mmin -${options.minutes}${nameFilter} -printf '%T@|%s|%p\\n' 2>/dev/null`;
+    const result = adbTryExecText(["-s", deviceId, "shell", "sh", "-c", command]);
 
     if (!result.ok) {
       continue;
     }
 
-    result.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .forEach((line) => {
-        const [modifiedEpoch, size, path] = line.split("|");
-        if (!path) {
-          return;
-        }
-
-        candidates.push({
-          path,
-          fileName: path.split("/").pop() ?? "invoice.pdf",
-          sizeBytes: Number(size) || 0,
-          modifiedAt: new Date(Number(modifiedEpoch) * 1000).toISOString(),
-        });
-      });
+    candidates.push(...parseFindRows(result.stdout));
   }
 
-  return dedupeInvoices(candidates).sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt));
+  return dedupeFiles(candidates).sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt));
 }
 
-function dedupeInvoices(invoices: InvoiceCandidate[]): InvoiceCandidate[] {
+function parseFindRows(output: string): AndroidFileCandidate[] {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const [modifiedEpoch, size, path] = line.split("|");
+      if (!path) {
+        return [];
+      }
+
+      return [
+        {
+          path,
+          fileName: path.split("/").pop() ?? "downloaded-file",
+          sizeBytes: Number(size) || 0,
+          modifiedAt: new Date(Number(modifiedEpoch) * 1000).toISOString(),
+        },
+      ];
+    });
+}
+
+function isLikelyInvoiceFile(file: AndroidFileCandidate): file is InvoiceCandidate {
+  return /\.pdf$/i.test(file.fileName) || /(invoice|receipt|bill)/i.test(file.fileName);
+}
+
+function dedupeFiles<T extends AndroidFileCandidate>(invoices: T[]): T[] {
   const seen = new Set<string>();
 
   return invoices.filter((invoice) => {
@@ -249,7 +304,11 @@ function dedupeInvoices(invoices: InvoiceCandidate[]): InvoiceCandidate[] {
 }
 
 function writeInvoiceManifest(invoices: InvoiceCandidate[]) {
-  writeFileSync(join(artifactDir, "invoice-candidates.json"), `${JSON.stringify(invoices, null, 2)}\n`);
+  writeFileManifest("invoice-candidates.json", invoices);
+}
+
+function writeFileManifest(fileName: string, files: AndroidFileCandidate[]) {
+  writeFileSync(join(artifactDir, fileName), `${JSON.stringify(files, null, 2)}\n`);
 }
 
 function pullInvoices(deviceId: string, invoices: InvoiceCandidate[]): string[] {
@@ -271,6 +330,10 @@ function pullInvoices(deviceId: string, invoices: InvoiceCandidate[]): string[] 
 
 function sanitizeFileName(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function captureScreenshot(deviceId: string): string {

@@ -54,6 +54,12 @@ Pull downloaded invoice PDFs into local artifacts:
 npm run blinkit:pull-invoices
 ```
 
+List recently changed files in Android shared/app storage:
+
+```bash
+npm run blinkit:recent-files
+```
+
 Artifacts are written locally under:
 
 ```txt
@@ -115,7 +121,21 @@ If Blinkit exposes a **Download invoice** action, prefer this over screenshot/OC
    npm run blinkit:pull-invoices
    ```
 
-4. Open the latest pulled invoice:
+4. If no invoices are found, immediately run:
+
+   ```bash
+   npm run blinkit:recent-files
+   ```
+
+   This writes `artifacts/blinkit/recent-files.json` and helps identify whether Blinkit saved the
+   invoice with a different name/extension or in app-specific storage. You can widen the recent
+   file window with:
+
+   ```bash
+   BLINKIT_RECENT_MINUTES=180 npm run blinkit:recent-files
+   ```
+
+5. Open the latest pulled invoice:
 
    ```bash
    open artifacts/blinkit/latest-invoice.pdf

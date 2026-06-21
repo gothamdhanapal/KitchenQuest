@@ -15,7 +15,8 @@
     "blinkit:capture": "tsx scripts/blinkit-connector.ts capture",
     "blinkit:dump-ui": "tsx scripts/blinkit-connector.ts dump-ui",
     "blinkit:list-invoices": "tsx scripts/blinkit-connector.ts list-invoices",
-    "blinkit:pull-invoices": "tsx scripts/blinkit-connector.ts pull-invoices"
+    "blinkit:pull-invoices": "tsx scripts/blinkit-connector.ts pull-invoices",
+    "blinkit:recent-files": "tsx scripts/blinkit-connector.ts recent-files"
   },
   "repository": {
     "type": "git",
