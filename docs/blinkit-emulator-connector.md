@@ -85,6 +85,12 @@ Try to inspect Chrome private storage on emulator images that allow `adb root`:
 npm run blinkit:chrome-private-files
 ```
 
+Parse a local Blinkit invoice PDF:
+
+```bash
+npm run blinkit:parse-invoice -- artifacts/blinkit/latest-invoice.pdf
+```
+
 Artifacts are written locally under:
 
 ```txt
@@ -190,3 +196,24 @@ If Blinkit exposes a **Download invoice** action, prefer this over screenshot/OC
 
 The invoice PDF should contain structured order details, line items, prices, timestamps, and
 address information. This is a better source for FreshLoop ingestion than UI screenshots.
+
+## Google Drive/manual PDF workflow
+
+If Chrome cannot expose its downloads through ADB, upload/share the invoice PDF to Google Drive or
+download it on your Mac, then copy it into the repo:
+
+```bash
+mkdir -p artifacts/blinkit
+cp ~/Downloads/ForwardInvoice_*.pdf artifacts/blinkit/latest-invoice.pdf
+npm run blinkit:parse-invoice
+```
+
+The parser writes:
+
+```txt
+artifacts/blinkit/latest-invoice-text.txt
+artifacts/blinkit/latest-invoice-parse.json
+```
+
+`latest-invoice-parse.json` contains invoice metadata plus candidate item/price lines. If candidates
+are missing or noisy, inspect `latest-invoice-text.txt` and tune `src/lib/invoices/blinkit-invoice.ts`.
