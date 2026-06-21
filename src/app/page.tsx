@@ -15,6 +15,10 @@ export default async function Home({ searchParams }: HomeProps) {
     return <SignedOut authMessage={authMessage} />;
   }
 
+  if (data.mode === "setup_required") {
+    return <SetupRequired error={data.setupError} userEmail={data.userEmail} />;
+  }
+
   const totalByItem = getTotalStockByItem(data.stock);
   const itemsToBuy = data.inventoryItems.filter(
     (item) => item.essential_to_refill && (totalByItem.get(item.id) ?? 0) <= 0,
@@ -121,6 +125,44 @@ export default async function Home({ searchParams }: HomeProps) {
           </Card>
         </div>
       </div>
+    </main>
+  );
+}
+
+function SetupRequired({ error, userEmail }: Readonly<{ error: string; userEmail: string | null }>) {
+  return (
+    <main className="flex min-h-screen items-center justify-center px-4 py-10">
+      <section className="w-full max-w-2xl rounded-[2rem] bg-white p-8 shadow-xl shadow-green-950/10">
+        <p className="text-sm font-semibold uppercase tracking-[0.35em] text-amber-700">FreshLoop setup</p>
+        <h1 className="mt-4 text-3xl font-bold text-green-950">Supabase schema is not installed yet</h1>
+        <p className="mt-3 text-slate-600">
+          You are signed in{userEmail ? ` as ${userEmail}` : ""}, but FreshLoop cannot find its database
+          tables in this Supabase project.
+        </p>
+        <pre className="mt-4 overflow-auto rounded-2xl bg-amber-50 p-4 text-sm text-amber-950 ring-1 ring-amber-100">
+          {error}
+        </pre>
+        <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+          <p className="font-bold text-green-950">Next step</p>
+          <p className="mt-2">Apply the migration in one of these ways:</p>
+          <ol className="mt-3 list-decimal space-y-2 pl-5">
+            <li>
+              CLI: run <code className="rounded bg-white px-1">npx supabase db push</code> after linking the
+              project.
+            </li>
+            <li>
+              Dashboard: open Supabase SQL Editor and run the SQL from{" "}
+              <code className="rounded bg-white px-1">
+                supabase/migrations/20260610184700_init_freshloop_schema.sql
+              </code>
+              .
+            </li>
+          </ol>
+        </div>
+        <form action="/api/auth/sign-out" method="post" className="mt-6">
+          <button className="rounded-2xl bg-green-800 px-4 py-3 font-bold text-white">Sign out</button>
+        </form>
+      </section>
     </main>
   );
 }

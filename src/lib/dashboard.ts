@@ -27,6 +27,16 @@ export type DashboardData =
       userEmail: null;
     }
   | {
+      mode: "setup_required";
+      inventoryItems: [];
+      stock: [];
+      needsReview: [];
+      purchases: [];
+      gmailConnections: 0;
+      userEmail: string | null;
+      setupError: string;
+    }
+  | {
       mode: "app";
       inventoryItems: InventoryItem[];
       stock: InventoryStock[];
@@ -67,7 +77,24 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   const adminClient = createSupabaseAdminClient();
-  await ensureUserProfile(adminClient, user);
+  try {
+    await ensureUserProfile(adminClient, user);
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
+      return {
+        mode: "setup_required",
+        inventoryItems: [],
+        stock: [],
+        needsReview: [],
+        purchases: [],
+        gmailConnections: 0,
+        userEmail: user.email ?? null,
+        setupError: getErrorMessage(error),
+      };
+    }
+
+    throw error;
+  }
 
   const [inventoryItems, stock, needsReview, purchases, gmailConnections] = await Promise.all([
     supabase.from("inventory_items").select("*").order("item_name"),
@@ -97,4 +124,29 @@ export async function getDashboardData(): Promise<DashboardData> {
     gmailConnections: gmailConnections.count ?? 0,
     userEmail: user.email ?? null,
   };
+}
+
+function isMissingSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string };
+  return (
+    maybeError.code === "PGRST205" ||
+    maybeError.message?.includes("Could not find the table") === true ||
+    maybeError.message?.includes("schema cache") === true
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+
+  return "Supabase schema has not been applied yet.";
 }
