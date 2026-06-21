@@ -12,7 +12,8 @@ type Command =
   | "recent-files"
   | "list-downloads"
   | "pull-downloads"
-  | "open-chrome-downloads";
+  | "open-chrome-downloads"
+  | "chrome-private-files";
 
 const ADB_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 const BLINKIT_PACKAGE_FALLBACK = "com.grofers.customerapp";
@@ -59,10 +60,11 @@ function main() {
       "list-downloads",
       "pull-downloads",
       "open-chrome-downloads",
+      "chrome-private-files",
     ].includes(command)
   ) {
     fail(
-      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, recent-files, list-downloads, pull-downloads, or open-chrome-downloads.`,
+      `Unknown command "${command}". Use diagnose, capture, dump-ui, open, list-invoices, pull-invoices, recent-files, list-downloads, pull-downloads, open-chrome-downloads, or chrome-private-files.`,
     );
   }
 
@@ -111,6 +113,28 @@ function main() {
       "chrome://downloads",
     ]);
     console.log("Requested Chrome downloads page.");
+    return;
+  }
+
+  if (command === "chrome-private-files") {
+    const result = listChromePrivateFiles(deviceId);
+    writeFileManifest("chrome-private-files.json", result.files);
+
+    if (result.rootOutput) {
+      console.log(result.rootOutput);
+    }
+
+    if (result.files.length === 0) {
+      console.log("No Chrome private invoice/PDF files found.");
+      console.log("If Chrome downloads UI shows files, ADB likely cannot access Chrome's private sandbox on this emulator image.");
+      return;
+    }
+
+    console.log("Chrome private file candidates:");
+    result.files.forEach((file, index) => {
+      console.log(`${index + 1}. ${file.path} (${file.sizeBytes} bytes, ${file.modifiedAt})`);
+    });
+    console.log("Manifest:", join(artifactDir, "chrome-private-files.json"));
     return;
   }
 
@@ -329,25 +353,48 @@ function listRecentFiles(deviceId: string): AndroidFileCandidate[] {
   });
 }
 
+function listChromePrivateFiles(deviceId: string): { rootOutput: string | null; files: AndroidFileCandidate[] } {
+  const rootResult = adbTryExecText(["-s", deviceId, "root"]);
+  const rootOutput = rootResult.ok ? rootResult.stdout.trim() : rootResult.error;
+  const directories = [
+    "/data/data/com.android.chrome",
+    "/data/user/0/com.android.chrome",
+    "/data_mirror/data_ce/null/0/com.android.chrome",
+  ];
+  const files = directories.flatMap((directory) =>
+    listAndroidFilesInDirectory(deviceId, directory, {
+      maxDepth: 8,
+      minutes: 24 * 60 * 30,
+      nameExpression: "\\( -iname '*.pdf' -o -iname '*invoice*' -o -iname '*receipt*' -o -iname '*bill*' \\)",
+    }),
+  );
+
+  return { rootOutput, files: dedupeFiles(files).sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt)) };
+}
+
 function listAndroidFiles(
   deviceId: string,
   options: { maxDepth: number; minutes: number; nameExpression: string },
 ): AndroidFileCandidate[] {
-  const candidates: AndroidFileCandidate[] = [];
+  return dedupeFiles(
+    ANDROID_SEARCH_DIRS.flatMap((directory) => listAndroidFilesInDirectory(deviceId, directory, options)),
+  ).sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt));
+}
 
-  for (const directory of ANDROID_SEARCH_DIRS) {
-    const nameFilter = options.nameExpression ? ` ${options.nameExpression}` : "";
-    const command = `find ${shellQuote(directory)} -maxdepth ${options.maxDepth} -type f -mmin -${options.minutes}${nameFilter} -printf '%T@|%s|%p\\n' 2>/dev/null`;
-    const result = adbTryExecText(["-s", deviceId, "shell", "sh", "-c", command]);
+function listAndroidFilesInDirectory(
+  deviceId: string,
+  directory: string,
+  options: { maxDepth: number; minutes: number; nameExpression: string },
+): AndroidFileCandidate[] {
+  const nameFilter = options.nameExpression ? ` ${options.nameExpression}` : "";
+  const command = `find ${shellQuote(directory)} -maxdepth ${options.maxDepth} -type f -mmin -${options.minutes}${nameFilter} -printf '%T@|%s|%p\\n' 2>/dev/null`;
+  const result = adbTryExecText(["-s", deviceId, "shell", "sh", "-c", command]);
 
-    if (!result.ok) {
-      continue;
-    }
-
-    candidates.push(...parseFindRows(result.stdout));
+  if (!result.ok) {
+    return [];
   }
 
-  return dedupeFiles(candidates).sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt));
+  return parseFindRows(result.stdout);
 }
 
 function parseFindRows(output: string): AndroidFileCandidate[] {

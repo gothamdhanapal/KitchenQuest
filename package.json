@@ -19,7 +19,8 @@
     "blinkit:recent-files": "tsx scripts/blinkit-connector.ts recent-files",
     "blinkit:list-downloads": "tsx scripts/blinkit-connector.ts list-downloads",
     "blinkit:pull-downloads": "tsx scripts/blinkit-connector.ts pull-downloads",
-    "blinkit:open-chrome-downloads": "tsx scripts/blinkit-connector.ts open-chrome-downloads"
+    "blinkit:open-chrome-downloads": "tsx scripts/blinkit-connector.ts open-chrome-downloads",
+    "blinkit:chrome-private-files": "tsx scripts/blinkit-connector.ts chrome-private-files"
   },
   "repository": {
     "type": "git",

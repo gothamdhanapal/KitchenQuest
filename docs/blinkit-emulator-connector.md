@@ -79,6 +79,12 @@ Open Chrome's downloads page inside the emulator:
 npm run blinkit:open-chrome-downloads
 ```
 
+Try to inspect Chrome private storage on emulator images that allow `adb root`:
+
+```bash
+npm run blinkit:chrome-private-files
+```
+
 Artifacts are written locally under:
 
 ```txt
@@ -164,6 +170,17 @@ If Blinkit exposes a **Download invoice** action, prefer this over screenshot/OC
 
    The filesystem search also checks Chrome app-specific external folders such as
    `/sdcard/Android/data/com.android.chrome`.
+
+   If Chrome shows the invoice but provider/shared storage searches are empty, try:
+
+   ```bash
+   npm run blinkit:chrome-private-files
+   npm run blinkit:capture
+   ```
+
+   If `chrome-private-files` also finds nothing, the file is likely in Chrome private storage that
+   ADB cannot read on the current emulator image. Use Chrome's three-dot menu beside the invoice and
+   look for a **Share** or **Open with** action to save/send the PDF into an accessible folder.
 
 6. Open the latest pulled invoice:
 
