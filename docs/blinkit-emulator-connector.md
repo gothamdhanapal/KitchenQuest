@@ -24,6 +24,12 @@ Check emulator/package state:
 npm run blinkit:diagnose
 ```
 
+Launch the detected Blinkit app package:
+
+```bash
+npm run blinkit:open
+```
+
 Capture the current emulator screen and UI text:
 
 ```bash
@@ -50,7 +56,7 @@ artifacts/blinkit/latest-text.json
 
 ## How to collect a useful sample
 
-1. Open Blinkit in the emulator.
+1. Open Blinkit in the emulator, or run `npm run blinkit:open`.
 2. Tap **Order Again** or account/order history.
 3. Open a delivered order details screen that shows product names, quantities, and prices.
 4. Run:

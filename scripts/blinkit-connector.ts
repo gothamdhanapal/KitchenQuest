@@ -2,7 +2,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-type Command = "diagnose" | "capture" | "dump-ui";
+type Command = "diagnose" | "capture" | "dump-ui" | "open";
+
+const ADB_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
+const BLINKIT_PACKAGE_FALLBACK = "com.grofers.customerapp";
 
 const command = (process.argv[2] ?? "diagnose") as Command;
 const artifactDir = resolve(process.cwd(), "artifacts", "blinkit");
@@ -11,8 +14,8 @@ const adb = resolveAdbPath();
 main();
 
 function main() {
-  if (!["diagnose", "capture", "dump-ui"].includes(command)) {
-    fail(`Unknown command "${command}". Use diagnose, capture, or dump-ui.`);
+  if (!["diagnose", "capture", "dump-ui", "open"].includes(command)) {
+    fail(`Unknown command "${command}". Use diagnose, capture, dump-ui, or open.`);
   }
 
   ensureArtifactDir();
@@ -37,6 +40,13 @@ function main() {
     console.log("1. Open Blinkit order history/order details in the emulator.");
     console.log("2. Run `npm run blinkit:capture`.");
     console.log("3. Share artifacts/blinkit/latest-text.json if the text extraction misses order details.");
+    return;
+  }
+
+  if (command === "open") {
+    const packageName = candidatePackages[0] ?? BLINKIT_PACKAGE_FALLBACK;
+    adbExec(["-s", deviceId, "shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"]);
+    console.log(`Requested launch for ${packageName}.`);
     return;
   }
 
@@ -122,12 +132,44 @@ function listBlinkitCandidatePackages(deviceId: string): string[] {
 }
 
 function captureScreenshot(deviceId: string): string {
-  const screenshot = adbExecBuffer(["-s", deviceId, "exec-out", "screencap", "-p"]);
+  const screenshot = captureScreenshotBuffer(deviceId);
   const timestamp = timestampForFile();
   const path = join(artifactDir, `${timestamp}.png`);
   writeFileSync(path, screenshot);
   writeFileSync(join(artifactDir, "latest.png"), screenshot);
   return path;
+}
+
+function captureScreenshotBuffer(deviceId: string): Buffer {
+  const directCapture = adbTryExecBuffer(["-s", deviceId, "exec-out", "screencap", "-p"]);
+
+  if (directCapture.ok && directCapture.stdout.length > 0) {
+    return directCapture.stdout;
+  }
+
+  adbExec(["-s", deviceId, "shell", "screencap", "-p", "/sdcard/freshloop-screen.png"]);
+  const fileCapture = adbTryExecBuffer(["-s", deviceId, "exec-out", "cat", "/sdcard/freshloop-screen.png"]);
+
+  if (fileCapture.ok && fileCapture.stdout.length > 0) {
+    return fileCapture.stdout;
+  }
+
+  fail(
+    [
+      "Unable to capture emulator screenshot.",
+      getCaptureError("Direct capture", directCapture),
+      getCaptureError("File capture", fileCapture),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+function getCaptureError(
+  label: string,
+  result: { ok: true; stdout: Buffer } | { ok: false; stdout: Buffer; error: string },
+): string | null {
+  return result.ok ? null : `${label} error: ${result.error}`;
 }
 
 function dumpUi(deviceId: string): string {
@@ -174,23 +216,32 @@ function readTextFile(path: string): string {
 }
 
 function adbExec(args: string[]): string {
-  const result = spawnSync(adb, args, { encoding: "utf8" });
+  const result = spawnSync(adb, args, { encoding: "utf8", maxBuffer: ADB_MAX_BUFFER_BYTES });
 
   if (result.status !== 0) {
-    fail(result.stderr || `adb ${args.join(" ")} failed`);
+    fail(formatAdbError(args, result.stderr, result.error));
   }
 
   return result.stdout;
 }
 
-function adbExecBuffer(args: string[]): Buffer {
-  const result = spawnSync(adb, args);
+function adbTryExecBuffer(args: string[]): { ok: true; stdout: Buffer } | { ok: false; stdout: Buffer; error: string } {
+  const result = spawnSync(adb, args, { maxBuffer: ADB_MAX_BUFFER_BYTES });
 
-  if (result.status !== 0) {
-    fail(result.stderr?.toString() || `adb ${args.join(" ")} failed`);
+  if (result.status !== 0 || result.error) {
+    return {
+      ok: false,
+      stdout: result.stdout,
+      error: formatAdbError(args, result.stderr?.toString(), result.error),
+    };
   }
 
-  return result.stdout;
+  return { ok: true, stdout: result.stdout };
+}
+
+function formatAdbError(args: string[], stderr?: string, error?: Error): string {
+  const details = [stderr?.trim(), error?.message].filter(Boolean).join("\n");
+  return details ? `adb ${args.join(" ")} failed\n${details}` : `adb ${args.join(" ")} failed`;
 }
 
 function ensureArtifactDir() {
