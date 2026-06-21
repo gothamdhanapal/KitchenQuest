@@ -53,20 +53,30 @@ function main() {
   if (command === "capture") {
     const screenshotPath = captureScreenshot(deviceId);
     const uiPath = dumpUi(deviceId);
-    const textPath = extractUiText(uiPath);
+    const { textPath, summaryPath } = extractUiDiagnostics(uiPath, {
+      deviceId,
+      foreground,
+      candidatePackages,
+    });
 
     console.log("Captured screenshot:", screenshotPath);
     console.log("Captured UI XML:", uiPath);
     console.log("Extracted visible text:", textPath);
+    console.log("Captured UI summary:", summaryPath);
     return;
   }
 
   if (command === "dump-ui") {
     const uiPath = dumpUi(deviceId);
-    const textPath = extractUiText(uiPath);
+    const { textPath, summaryPath } = extractUiDiagnostics(uiPath, {
+      deviceId,
+      foreground,
+      candidatePackages,
+    });
 
     console.log("Captured UI XML:", uiPath);
     console.log("Extracted visible text:", textPath);
+    console.log("Captured UI summary:", summaryPath);
   }
 }
 
@@ -182,20 +192,56 @@ function dumpUi(deviceId: string): string {
   return path;
 }
 
-function extractUiText(uiPath: string): string {
+function extractUiDiagnostics(
+  uiPath: string,
+  metadata: {
+    deviceId: string;
+    foreground: { packageName: string | null; activity: string | null };
+    candidatePackages: string[];
+  },
+): { textPath: string; summaryPath: string } {
   const xml = readTextFile(uiPath);
   const nodes = Array.from(xml.matchAll(/<node\b[^>]*>/g)).map((match) => match[0]);
-  const textNodes = nodes
-    .map((node) => ({
-      text: decodeXmlAttribute(extractAttribute(node, "text")),
-      resourceId: decodeXmlAttribute(extractAttribute(node, "resource-id")),
-      className: decodeXmlAttribute(extractAttribute(node, "class")),
-      bounds: decodeXmlAttribute(extractAttribute(node, "bounds")),
-    }))
-    .filter((node) => node.text.length > 0);
-  const path = join(artifactDir, "latest-text.json");
-  writeFileSync(path, `${JSON.stringify(textNodes, null, 2)}\n`);
-  return path;
+  const nodeDiagnostics = nodes.map((node) => ({
+    text: decodeXmlAttribute(extractAttribute(node, "text")),
+    contentDescription: decodeXmlAttribute(extractAttribute(node, "content-desc")),
+    resourceId: decodeXmlAttribute(extractAttribute(node, "resource-id")),
+    className: decodeXmlAttribute(extractAttribute(node, "class")),
+    bounds: decodeXmlAttribute(extractAttribute(node, "bounds")),
+    clickable: decodeXmlAttribute(extractAttribute(node, "clickable")),
+  }));
+  const visibleNodes = nodeDiagnostics.filter(
+    (node) => node.text.length > 0 || node.contentDescription.length > 0,
+  );
+  const resourceIds = Array.from(new Set(nodeDiagnostics.map((node) => node.resourceId).filter(Boolean))).sort();
+  const classNames = Array.from(new Set(nodeDiagnostics.map((node) => node.className).filter(Boolean))).sort();
+  const textPath = join(artifactDir, "latest-text.json");
+  const summaryPath = join(artifactDir, "latest-summary.json");
+
+  writeFileSync(textPath, `${JSON.stringify(visibleNodes, null, 2)}\n`);
+  writeFileSync(
+    summaryPath,
+    `${JSON.stringify(
+      {
+        capturedAt: new Date().toISOString(),
+        deviceId: metadata.deviceId,
+        foreground: metadata.foreground,
+        blinkitLikePackages: metadata.candidatePackages,
+        nodeCount: nodeDiagnostics.length,
+        visibleTextOrDescriptionCount: visibleNodes.length,
+        resourceIds,
+        classNames,
+        guidance:
+          visibleNodes.length === 0
+            ? "Android UI hierarchy exposed no text or content descriptions. If the screenshot shows order text, use OCR or investigate app network/session data next."
+            : "Use latest-text.json to build selectors or parsers for the visible order detail screen.",
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  return { textPath, summaryPath };
 }
 
 function extractAttribute(node: string, attributeName: string): string {

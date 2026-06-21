@@ -54,6 +54,18 @@ The most useful file for the next parser iteration is:
 artifacts/blinkit/latest-text.json
 ```
 
+If that is empty, inspect:
+
+```txt
+artifacts/blinkit/latest-summary.json
+```
+
+The summary includes foreground app metadata, UI node counts, resource IDs, and class names. If
+`visibleTextOrDescriptionCount` is `0` while `latest.png` clearly shows order details, Android is
+not exposing Blinkit's visible text through the UI hierarchy. At that point, continuing to tune
+`uiautomator` has low value; the practical next options are OCR from the screenshot or a local
+network/session connector.
+
 ## How to collect a useful sample
 
 1. Open Blinkit in the emulator, or run `npm run blinkit:open`.
@@ -65,7 +77,7 @@ artifacts/blinkit/latest-text.json
    npm run blinkit:capture
    ```
 
-5. Inspect or share `artifacts/blinkit/latest-text.json`.
+5. Inspect or share `artifacts/blinkit/latest-text.json` and `artifacts/blinkit/latest-summary.json`.
 
 If `latest-text.json` does not contain the product names/prices, the next step is OCR from
 `artifacts/blinkit/latest.png`.
