@@ -61,6 +61,13 @@ export async function POST(request: NextRequest) {
   redirectUrl.searchParams.set("emails", String(summary.emailsScanned));
   redirectUrl.searchParams.set("items", String(summary.itemsExtracted));
   redirectUrl.searchParams.set("inserted", String(summary.insertedPurchases));
+  redirectUrl.searchParams.set(
+    "retailers",
+    [
+      `Instamart ${summary.retailers.instamart.emailsScanned}/${summary.retailers.instamart.itemsExtracted}`,
+      `Blinkit ${summary.retailers.blinkit.emailsScanned}/${summary.retailers.blinkit.itemsExtracted}`,
+    ].join(", "),
+  );
 
   if (summary.errors[0]) {
     redirectUrl.searchParams.set("message", summary.errors[0].message);

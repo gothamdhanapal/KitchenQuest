@@ -270,14 +270,20 @@ function getImportMessage(params: Record<string, string | string[] | undefined> 
   const emails = getFirstParam(params?.emails) ?? "0";
   const items = getFirstParam(params?.items) ?? "0";
   const inserted = getFirstParam(params?.inserted) ?? "0";
+  const retailers = getFirstParam(params?.retailers);
+  const retailerDetails = retailers ? ` Retailer scan: ${retailers}.` : "";
 
   if (status === "partial") {
     const message = getFirstParam(params?.message);
-    return `Imported with warnings over the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).${message ? ` First warning: ${message}` : ""}`;
+    return `Imported with warnings over the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}${message ? ` First warning: ${message}` : ""}`;
   }
 
   if (status === "complete") {
-    return `Import complete for the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).`;
+    if (emails === "0") {
+      return `Import complete, but no matching Instamart or Blinkit emails were found in the last ${days} day(s).${retailerDetails} Try "Last 7 days" if you only scanned today.`;
+    }
+
+    return `Import complete for the last ${days} day(s): scanned ${emails} email(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}`;
   }
 
   return null;

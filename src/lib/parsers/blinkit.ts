@@ -24,8 +24,15 @@ function normalizeProductText(value: string): string {
 
 export const blinkitParser: RetailerParser = {
   retailer: "blinkit",
-  gmailQuery:
-    '(from:no-reply@blinkit.com OR from:noreply@blinkit.com OR from:orders@blinkit.com) (subject:delivered OR subject:"order delivered" OR subject:"order has been delivered")',
+  gmailQuery: "from:blinkit.com delivered",
+  gmailQueries: [
+    "from:blinkit.com delivered",
+    "from:blinkit.com order",
+    "from:blinkit.com",
+    "from:noreply@blinkit.com",
+    "from:no-reply@blinkit.com",
+    "from:orders@blinkit.com",
+  ],
   parse(emailHtml: string, emailDate: Date): ParsedLineItem[] {
     const $ = cheerio.load(emailHtml);
     const candidates: ParsedLineItem[] = [];

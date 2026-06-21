@@ -4,7 +4,13 @@ const LINE_ITEM_PATTERN = /(\d+(?:\.\d+)?)\s*x\s+(.*?)\s+₹\s?([\d,.]+)/g;
 
 export const instamartParser: RetailerParser = {
   retailer: "instamart",
-  gmailQuery: 'from:noreply@swiggy.in subject:"Your Swiggy Instamart order was successfully delivered"',
+  gmailQuery: "from:noreply@swiggy.in subject:Instamart",
+  gmailQueries: [
+    'from:noreply@swiggy.in subject:"Your Swiggy Instamart order was successfully delivered"',
+    "from:noreply@swiggy.in subject:Instamart",
+    "from:noreply@swiggy.in Instamart",
+    "from:swiggy.in Instamart",
+  ],
   parse(emailHtml: string, emailDate: Date): ParsedLineItem[] {
     return Array.from(emailHtml.matchAll(LINE_ITEM_PATTERN))
       .map((match) => ({

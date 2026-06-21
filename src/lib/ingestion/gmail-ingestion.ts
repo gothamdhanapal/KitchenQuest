@@ -1,11 +1,13 @@
 import "server-only";
 
+import type { gmail_v1 } from "googleapis";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getGmailOrderMessage, searchGmailMessages } from "@/lib/gmail/messages";
 import { createGmailClientFromRefreshToken } from "@/lib/gmail/oauth";
 import { ingestOrderLineItems } from "@/lib/ingestion/process-order";
 import { retailerParsers } from "@/lib/parsers";
 import { decryptSecret } from "@/lib/security/encryption";
+import type { Retailer, RetailerParser } from "@/lib/types";
 
 export type GmailConnectionForIngestion = {
   id: string;
@@ -21,7 +23,14 @@ export type GmailIngestionSummary = {
   emailsScanned: number;
   itemsExtracted: number;
   insertedPurchases: number;
+  retailers: Record<Retailer, RetailerIngestionSummary>;
   errors: Array<{ connectionId: string; retailer?: string; message: string }>;
+};
+
+export type RetailerIngestionSummary = {
+  emailsScanned: number;
+  itemsExtracted: number;
+  insertedPurchases: number;
 };
 
 type RunGmailIngestionOptions = {
@@ -39,6 +48,10 @@ export async function runGmailIngestionForConnections(
     emailsScanned: 0,
     itemsExtracted: 0,
     insertedPurchases: 0,
+    retailers: {
+      blinkit: { emailsScanned: 0, itemsExtracted: 0, insertedPurchases: 0 },
+      instamart: { emailsScanned: 0, itemsExtracted: 0, insertedPurchases: 0 },
+    },
     errors: [],
   };
 
@@ -52,15 +65,17 @@ export async function runGmailIngestionForConnections(
         const parserErrors: string[] = [];
 
         try {
-          const messageIds = await searchGmailMessages(gmail, parser.gmailQuery, options.getSince(connection));
+          const messageIds = await searchRetailerMessages(gmail, parser, options.getSince(connection));
           emailsScanned = messageIds.length;
           summary.emailsScanned += messageIds.length;
+          summary.retailers[parser.retailer].emailsScanned += messageIds.length;
 
           for (const messageId of messageIds) {
             const message = await getGmailOrderMessage(gmail, messageId);
             const lineItems = parser.parse(message.html, message.date);
             itemsExtracted += lineItems.length;
             summary.itemsExtracted += lineItems.length;
+            summary.retailers[parser.retailer].itemsExtracted += lineItems.length;
 
             const result = await ingestOrderLineItems(supabase, {
               householdId: connection.household_id,
@@ -72,6 +87,7 @@ export async function runGmailIngestionForConnections(
             });
 
             summary.insertedPurchases += result.inserted;
+            summary.retailers[parser.retailer].insertedPurchases += result.inserted;
           }
         } catch (parserError) {
           const message = parserError instanceof Error ? parserError.message : "Unknown parser error";
@@ -103,4 +119,20 @@ export async function runGmailIngestionForConnections(
   }
 
   return summary;
+}
+
+async function searchRetailerMessages(
+  gmail: gmail_v1.Gmail,
+  parser: RetailerParser,
+  since: string | null,
+): Promise<string[]> {
+  const queries = parser.gmailQueries?.length ? parser.gmailQueries : [parser.gmailQuery];
+  const messageIds = new Set<string>();
+
+  for (const query of queries) {
+    const ids = await searchGmailMessages(gmail, query, since);
+    ids.forEach((id) => messageIds.add(id));
+  }
+
+  return Array.from(messageIds);
 }
