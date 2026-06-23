@@ -1,12 +1,21 @@
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { ensureUserProfile } from "@/lib/households";
 import { ingestOrderLineItems } from "@/lib/ingestion/process-order";
-import { parseBlinkitInvoicePdf } from "@/lib/invoices/blinkit-invoice";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { ParsedLineItem } from "@/lib/types";
+
+type ParsedBlinkitInvoiceJson = {
+  metadata: {
+    orderId: string | null;
+    invoiceNumber: string | null;
+  };
+  parsedItems: ParsedLineItem[];
+};
 
 export async function POST(request: NextRequest) {
   const redirectUrl = new URL("/", request.url);
@@ -42,7 +51,7 @@ export async function POST(request: NextRequest) {
 
   for (const invoicePath of invoicePaths) {
     try {
-      const invoice = await parseBlinkitInvoicePdf(invoicePath);
+      const invoice = await parseInvoiceWithLocalScript(invoicePath);
       summary.items += invoice.parsedItems.length;
 
       if (invoice.parsedItems.length === 0) {
@@ -99,4 +108,33 @@ async function getLocalBlinkitInvoicePaths(): Promise<string[]> {
   }
 
   return Array.from(paths).sort();
+}
+
+async function parseInvoiceWithLocalScript(invoicePath: string): Promise<ParsedBlinkitInvoiceJson> {
+  const parseCacheDir = resolve(process.cwd(), "artifacts", "blinkit", "parse-cache");
+  const jsonOut = join(parseCacheDir, `${sanitizeFileName(basename(invoicePath))}.json`);
+  const command = process.platform === "win32" ? "npx.cmd" : "npx";
+  const result = spawnSync(command, ["tsx", "scripts/parse-blinkit-invoice.ts", invoicePath, "--json-out", jsonOut], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+
+  if (result.status !== 0) {
+    throw new Error([result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n") || "Invoice parser failed.");
+  }
+
+  const parsed = JSON.parse(await readFile(jsonOut, "utf8")) as ParsedBlinkitInvoiceJson;
+
+  return {
+    ...parsed,
+    parsedItems: parsed.parsedItems.map((item) => ({
+      ...item,
+      orderDate: new Date(item.orderDate),
+    })),
+  };
+}
+
+function sanitizeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
