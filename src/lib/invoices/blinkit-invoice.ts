@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { PDFParse } from "pdf-parse";
 import type { ParsedLineItem } from "@/lib/types";
 
@@ -29,6 +30,7 @@ export type BlinkitInvoiceLineCandidate = {
 };
 
 export async function parseBlinkitInvoicePdf(sourcePath: string): Promise<BlinkitInvoiceParseResult> {
+  configurePdfWorker();
   const data = await readFile(sourcePath);
   const parser = new PDFParse({ data });
 
@@ -65,6 +67,11 @@ export async function parseBlinkitInvoicePdf(sourcePath: string): Promise<Blinki
   } finally {
     await parser.destroy();
   }
+}
+
+function configurePdfWorker() {
+  const workerPath = pathToFileURL(`${process.cwd()}/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs`).toString();
+  PDFParse.setWorker(workerPath);
 }
 
 export function normalizeExtractedText(value: string): string {
