@@ -9,7 +9,7 @@ import type { InventoryItem, ItemAlias, ParsedLineItem, Retailer } from "@/lib/t
 type IngestOrderInput = {
   householdId: string;
   userId: string;
-  gmailConnectionId: string;
+  gmailConnectionId?: string | null;
   retailer: Retailer;
   sourceMessageId: string;
   lineItems: ParsedLineItem[];
@@ -37,7 +37,7 @@ export async function ingestOrderLineItems(
     const { error } = await supabase.from("purchase_log").insert({
       household_id: input.householdId,
       user_id: input.userId,
-      gmail_connection_id: input.gmailConnectionId,
+      gmail_connection_id: input.gmailConnectionId ?? null,
       retailer: input.retailer,
       order_date: lineItem.orderDate.toISOString(),
       raw_product_name: lineItem.rawName,

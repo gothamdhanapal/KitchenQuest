@@ -14,18 +14,9 @@ export async function ensureUserProfile(
   supabase: SupabaseClient,
   user: Pick<User, "id" | "email" | "user_metadata">,
 ): Promise<UserProfile> {
-  const { data: existingProfile, error: profileError } = await supabase
-    .from("users")
-    .select("id, household_id, email, display_name, role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profileError) {
-    throw profileError;
-  }
-
+  const existingProfile = await getUserProfile(supabase, user.id);
   if (existingProfile) {
-    return existingProfile as UserProfile;
+    return existingProfile;
   }
 
   const { data: household, error: householdError } = await supabase
@@ -54,8 +45,30 @@ export async function ensureUserProfile(
     .single();
 
   if (createProfileError) {
+    if (createProfileError.code === "23505") {
+      const profileCreatedByConcurrentRequest = await getUserProfile(supabase, user.id);
+
+      if (profileCreatedByConcurrentRequest) {
+        return profileCreatedByConcurrentRequest;
+      }
+    }
+
     throw createProfileError;
   }
 
   return createdProfile as UserProfile;
+}
+
+async function getUserProfile(supabase: SupabaseClient, userId: string): Promise<UserProfile | null> {
+  const { data: existingProfile, error } = await supabase
+    .from("users")
+    .select("id, household_id, email, display_name, role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return existingProfile as UserProfile | null;
 }

@@ -13,6 +13,7 @@ export type ParsedLineItem = {
 export type RetailerParser = {
   retailer: Retailer;
   gmailQuery: string;
+  gmailQueries?: string[];
   parse(emailHtml: string, emailDate: Date): ParsedLineItem[];
 };
 

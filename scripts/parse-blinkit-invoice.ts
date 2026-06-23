@@ -1,0 +1,67 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { parseBlinkitInvoicePdf } from "../src/lib/invoices/blinkit-invoice";
+
+const args = process.argv.slice(2);
+const jsonOutIndex = args.indexOf("--json-out");
+const jsonOutPath = jsonOutIndex >= 0 ? resolve(process.cwd(), args[jsonOutIndex + 1]) : null;
+const sourceArg = args.find((arg, index) => arg !== "--json-out" && index !== jsonOutIndex + 1);
+const sourcePath = resolve(process.cwd(), sourceArg ?? "artifacts/blinkit/latest-invoice.pdf");
+const artifactDir = resolve(process.cwd(), "artifacts", "blinkit");
+
+async function main() {
+  mkdirSync(artifactDir, { recursive: true });
+  const result = await parseBlinkitInvoicePdf(sourcePath);
+  const textPath = join(artifactDir, "latest-invoice-text.txt");
+  const numberedTextPath = join(artifactDir, "latest-invoice-numbered-lines.txt");
+  const sectionsPath = join(artifactDir, "latest-invoice-sections.json");
+  const tablesPath = join(artifactDir, "latest-invoice-tables.json");
+  const jsonPath = jsonOutPath ?? join(artifactDir, "latest-invoice-parse.json");
+
+  writeFileSync(textPath, `${result.text}\n`);
+  writeFileSync(numberedTextPath, `${result.debug.numberedLines.join("\n")}\n`);
+  writeFileSync(sectionsPath, `${JSON.stringify(result.debug.likelyItemSections, null, 2)}\n`);
+  writeFileSync(tablesPath, `${JSON.stringify(result.tables, null, 2)}\n`);
+  mkdirSync(dirname(jsonPath), { recursive: true });
+  writeFileSync(jsonPath, `${JSON.stringify(toJsonResult(result, { textPath, numberedTextPath, sectionsPath, tablesPath }), null, 2)}\n`);
+
+  console.log("Parsed invoice:", sourcePath);
+  console.log("Extracted text:", textPath);
+  console.log("Numbered lines:", numberedTextPath);
+  console.log("Likely item sections:", sectionsPath);
+  console.log("Detected tables:", tablesPath);
+  console.log("Parse JSON:", jsonPath);
+  console.log("Order ID:", result.metadata.orderId ?? "not found");
+  console.log("Line candidates:", result.lineCandidates.length);
+  console.log("Parsed items:", result.parsedItems.length);
+
+  if (result.lineCandidates.length === 0) {
+    console.log("No line candidates found. Inspect latest-invoice-sections.json and latest-invoice-numbered-lines.txt to tune the invoice parser.");
+  } else if (result.parsedItems.length === 0) {
+    console.log("Line candidates were found, but no parsed items were produced. Inspect latest-invoice-parse.json to tune row parsing.");
+  }
+}
+
+function toJsonResult(
+  result: Awaited<ReturnType<typeof parseBlinkitInvoicePdf>>,
+  debugArtifacts: {
+    textPath: string;
+    numberedTextPath: string;
+    sectionsPath: string;
+    tablesPath: string;
+  },
+) {
+  return {
+    sourcePath: result.sourcePath,
+    metadata: result.metadata,
+    pages: result.pages,
+    lineCandidates: result.lineCandidates,
+    parsedItems: result.parsedItems,
+    debugArtifacts,
+  };
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

@@ -9,7 +9,19 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "blinkit:diagnose": "tsx scripts/blinkit-connector.ts diagnose",
+    "blinkit:open": "tsx scripts/blinkit-connector.ts open",
+    "blinkit:capture": "tsx scripts/blinkit-connector.ts capture",
+    "blinkit:dump-ui": "tsx scripts/blinkit-connector.ts dump-ui",
+    "blinkit:list-invoices": "tsx scripts/blinkit-connector.ts list-invoices",
+    "blinkit:pull-invoices": "tsx scripts/blinkit-connector.ts pull-invoices",
+    "blinkit:recent-files": "tsx scripts/blinkit-connector.ts recent-files",
+    "blinkit:list-downloads": "tsx scripts/blinkit-connector.ts list-downloads",
+    "blinkit:pull-downloads": "tsx scripts/blinkit-connector.ts pull-downloads",
+    "blinkit:open-chrome-downloads": "tsx scripts/blinkit-connector.ts open-chrome-downloads",
+    "blinkit:chrome-private-files": "tsx scripts/blinkit-connector.ts chrome-private-files",
+    "blinkit:parse-invoice": "tsx scripts/parse-blinkit-invoice.ts"
   },
   "repository": {
     "type": "git",
@@ -33,6 +45,7 @@
     "cheerio": "^1.2.0",
     "googleapis": "^173.0.0",
     "next": "^16.2.9",
+    "pdf-parse": "^2.4.5",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zod": "^4.4.3"

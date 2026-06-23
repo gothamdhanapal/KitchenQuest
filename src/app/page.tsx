@@ -2,11 +2,22 @@ import { getDashboardData } from "@/lib/dashboard";
 import { getExpiryState } from "@/lib/expiry";
 import type { InventoryItem, InventoryStock, PurchaseLog } from "@/lib/types";
 
-export default async function Home() {
+type HomeProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Home({ searchParams }: HomeProps) {
+  const params = await searchParams;
+  const authMessage = getAuthMessage(params);
+  const importMessage = getImportMessage(params);
   const data = await getDashboardData();
 
   if (data.mode === "signed_out") {
-    return <SignedOut />;
+    return <SignedOut authMessage={authMessage} />;
+  }
+
+  if (data.mode === "setup_required") {
+    return <SetupRequired error={data.setupError} userEmail={data.userEmail} />;
   }
 
   const totalByItem = getTotalStockByItem(data.stock);
@@ -55,6 +66,12 @@ export default async function Home() {
           </div>
         </header>
 
+        {importMessage ? (
+          <p className="rounded-3xl bg-lime-50 p-4 text-sm font-semibold text-green-950 ring-1 ring-lime-200">
+            {importMessage}
+          </p>
+        ) : null}
+
         <section className="grid gap-4 md:grid-cols-4">
           <Stat label="Active Gmail accounts" value={String(data.gmailConnections)} />
           <Stat label="Expiring soon" value={String(expiringSoonCount)} tone="amber" />
@@ -73,22 +90,55 @@ export default async function Home() {
             </div>
           </Card>
 
-          <Card title="Items to buy">
-            <div className="flex flex-col gap-3">
-              {itemsToBuy.length === 0 ? (
-                <EmptyState message="All essential refill items currently have stock." />
-              ) : (
-                itemsToBuy.map((item) => (
-                  <div key={item.id} className="rounded-2xl border border-green-100 bg-white p-4">
-                    <p className="font-semibold text-green-950">{item.item_name}</p>
-                    <p className="text-sm text-slate-500">
-                      {item.category} · default {item.default_shelf_life_days} days
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
+          <div className="flex flex-col gap-6">
+            <Card title="Import recent orders">
+              <form action="/api/ingest/backfill" method="post" className="flex flex-col gap-3">
+                <p className="text-sm text-slate-600">
+                  Re-scan connected Gmail accounts for recent Instamart and Blinkit orders. Imports are capped at
+                  7 days and repeated scans will skip already logged purchases.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <select
+                    name="lookbackDays"
+                    defaultValue="7"
+                    className="min-w-0 flex-1 rounded-xl border border-green-100 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="1">Today / last 24 hours</option>
+                    <option value="7">Last 7 days</option>
+                  </select>
+                  <button className="rounded-xl bg-green-800 px-4 py-2 text-sm font-bold text-white">
+                    Pull orders
+                  </button>
+                </div>
+              </form>
+              <form action="/api/ingest/blinkit-invoices" method="post" className="mt-4 border-t border-green-100 pt-4">
+                <p className="text-sm text-slate-600">
+                  Local dev only: import Blinkit invoice PDFs from <code>artifacts/blinkit</code> after exporting
+                  invoices from the emulator or Drive.
+                </p>
+                <button className="mt-3 rounded-xl bg-sky-700 px-4 py-2 text-sm font-bold text-white">
+                  Import local Blinkit invoices
+                </button>
+              </form>
+            </Card>
+
+            <Card title="Items to buy">
+              <div className="flex flex-col gap-3">
+                {itemsToBuy.length === 0 ? (
+                  <EmptyState message="All essential refill items currently have stock." />
+                ) : (
+                  itemsToBuy.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-green-100 bg-white p-4">
+                      <p className="font-semibold text-green-950">{item.item_name}</p>
+                      <p className="text-sm text-slate-500">
+                        {item.category} · default {item.default_shelf_life_days} days
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -119,7 +169,45 @@ export default async function Home() {
   );
 }
 
-function SignedOut() {
+function SetupRequired({ error, userEmail }: Readonly<{ error: string; userEmail: string | null }>) {
+  return (
+    <main className="flex min-h-screen items-center justify-center px-4 py-10">
+      <section className="w-full max-w-2xl rounded-[2rem] bg-white p-8 shadow-xl shadow-green-950/10">
+        <p className="text-sm font-semibold uppercase tracking-[0.35em] text-amber-700">FreshLoop setup</p>
+        <h1 className="mt-4 text-3xl font-bold text-green-950">Supabase schema is not installed yet</h1>
+        <p className="mt-3 text-slate-600">
+          You are signed in{userEmail ? ` as ${userEmail}` : ""}, but FreshLoop cannot find its database
+          tables in this Supabase project.
+        </p>
+        <pre className="mt-4 overflow-auto rounded-2xl bg-amber-50 p-4 text-sm text-amber-950 ring-1 ring-amber-100">
+          {error}
+        </pre>
+        <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+          <p className="font-bold text-green-950">Next step</p>
+          <p className="mt-2">Apply the migration in one of these ways:</p>
+          <ol className="mt-3 list-decimal space-y-2 pl-5">
+            <li>
+              CLI: run <code className="rounded bg-white px-1">npx supabase db push</code> after linking the
+              project.
+            </li>
+            <li>
+              Dashboard: open Supabase SQL Editor and run the SQL from{" "}
+              <code className="rounded bg-white px-1">
+                supabase/migrations/20260610184700_init_freshloop_schema.sql
+              </code>
+              .
+            </li>
+          </ol>
+        </div>
+        <form action="/api/auth/sign-out" method="post" className="mt-6">
+          <button className="rounded-2xl bg-green-800 px-4 py-3 font-bold text-white">Sign out</button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function SignedOut({ authMessage }: Readonly<{ authMessage: string | null }>) {
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
       <section className="w-full max-w-md rounded-[2rem] bg-white p-8 shadow-xl shadow-green-950/10">
@@ -128,6 +216,11 @@ function SignedOut() {
         <p className="mt-3 text-slate-600">
           Enter one of the household email addresses. Supabase will send a magic link.
         </p>
+        {authMessage ? (
+          <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-sm font-medium text-amber-900 ring-1 ring-amber-100">
+            {authMessage}
+          </p>
+        ) : null}
         <form action="/api/auth/sign-in" method="post" className="mt-6 flex flex-col gap-3">
           <input
             name="email"
@@ -141,6 +234,73 @@ function SignedOut() {
       </section>
     </main>
   );
+}
+
+function getAuthMessage(params: Record<string, string | string[] | undefined> | undefined): string | null {
+  const auth = getFirstParam(params?.auth);
+
+  if (auth === "check_email") {
+    return "Check your email for the FreshLoop magic link.";
+  }
+
+  if (auth === "missing_email") {
+    return "Please enter an email address.";
+  }
+
+  if (auth === "sign_in_failed") {
+    const message = getFirstParam(params?.message);
+    return message ? `Supabase sign-in failed: ${message}` : "Supabase sign-in failed. Check the terminal logs.";
+  }
+
+  return null;
+}
+
+function getImportMessage(params: Record<string, string | string[] | undefined> | undefined): string | null {
+  const status = getFirstParam(params?.import);
+
+  if (!status) {
+    return null;
+  }
+
+  if (status === "no_connections") {
+    return "Connect Gmail before importing recent orders.";
+  }
+
+  if (status === "not_authenticated") {
+    return "Sign in before importing recent orders.";
+  }
+
+  if (status === "failed") {
+    const message = getFirstParam(params?.message);
+    return message ? `Import failed: ${message}` : "Import failed. Check the terminal logs.";
+  }
+
+  const days = getFirstParam(params?.days) ?? "7";
+  const importWindow = days === "invoice" ? "local invoice import" : `the last ${days} day(s)`;
+  const emails = getFirstParam(params?.emails) ?? "0";
+  const items = getFirstParam(params?.items) ?? "0";
+  const inserted = getFirstParam(params?.inserted) ?? "0";
+  const retailers = getFirstParam(params?.retailers);
+  const retailerDetails = retailers ? ` Retailer scan: ${retailers}.` : "";
+
+  if (status === "partial") {
+    const message = getFirstParam(params?.message);
+    return `Imported with warnings for ${importWindow}: scanned ${emails} source(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}${message ? ` First warning: ${message}` : ""}`;
+  }
+
+  if (status === "complete") {
+    if (emails === "0") {
+      return `Import complete, but no matching sources were found for ${importWindow}.${retailerDetails} Try "Last 7 days" if you only scanned today.`;
+    }
+
+    return `Import complete for ${importWindow}: scanned ${emails} source(s), extracted ${items} item(s), added ${inserted} purchase row(s).${retailerDetails}`;
+  }
+
+  return null;
+}
+
+function getFirstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function Card({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) {
